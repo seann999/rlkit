@@ -44,8 +44,8 @@ def fanin_init_weights_like(tensor):
 GPU wrappers
 """
 
-_use_gpu = False
-device = None
+_use_gpu = True
+device = 0
 
 
 def set_gpu_mode(mode, gpu_id=0):
@@ -80,7 +80,7 @@ def get_numpy(tensor):
 
 
 def zeros(*sizes, **kwargs):
-    return torch.zeros(*sizes, **kwargs).to(device)
+    return torch.zeros(*sizes, device="cuda", **kwargs)#.to(device)
 
 
 def ones(*sizes, **kwargs):

@@ -16,10 +16,10 @@ from gym.envs.classic_control import Continuous_MountainCarEnv
 import rlkit.torch.pytorch_util as ptu
 from rlkit.envs.wrappers import NormalizedBoxEnv
 from rlkit.launchers.launcher_util import setup_logger
-from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy
-from rlkit.torch.sac.sac import SoftActorCritic
+from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy, MultiTanhGaussianPolicy
+from rlkit.torch.sac.bigthompsac import BigThompsonSoftActorCritic
 from rlkit.torch.sac.diayn import DIAYN
-from rlkit.torch.networks import FlattenMlp
+from rlkit.torch.networks import EnsembleFlattenMlp, FlattenMlp
 
 #from create_maze_env import create_maze_env
 from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
@@ -39,49 +39,55 @@ torch.backends.cudnn.deterministic = True
 
 def experiment(variant):
     env = NormalizedBoxEnv(create_swingup())
-    #env = NormalizedBoxEnv(HalfCheetahEnv())
-    #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
-    #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))
-    # Or for a specific version:
-    # import gym
-    # env = NormalizedBoxEnv(gym.make('HalfCheetah-v1'))
 
-    skill_dim = 0#50
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
 
     net_size = variant['net_size']
-    qf1 = FlattenMlp(
+    qf1 = EnsembleFlattenMlp(
+        10,
         hidden_sizes=[net_size, net_size],
-        input_size=obs_dim + skill_dim + action_dim,
+        input_size=obs_dim + action_dim,
         output_size=1,
     )
-    qf2 = FlattenMlp(
+    qf2 = EnsembleFlattenMlp(
+        10,
         hidden_sizes=[net_size, net_size],
-        input_size=obs_dim + skill_dim + action_dim,
+        input_size=obs_dim + action_dim,
+        output_size=1,
+    )
+    pqf1 = EnsembleFlattenMlp(
+        10,
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + action_dim,
+        output_size=1,
+    )
+    pqf2 = EnsembleFlattenMlp(
+        10,
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + action_dim,
         output_size=1,
     )
     vf = FlattenMlp(
-        hidden_sizes=[net_size, net_size],
-        input_size=obs_dim + skill_dim,
+        hidden_sizes=[1],
+        input_size=obs_dim,
         output_size=1,
     )
-    policy = TanhGaussianPolicy(
+    policy = MultiTanhGaussianPolicy(
         hidden_sizes=[net_size, net_size],
-        obs_dim=obs_dim + skill_dim,
+        obs_dim=obs_dim,
         action_dim=action_dim,
-        #k=4,
+        heads=10,
     )
-    disc = FlattenMlp(
-        hidden_sizes=[net_size, net_size],
-        input_size=obs_dim,
-        output_size=skill_dim if skill_dim > 0 else 1,
-    )
-    algorithm = SoftActorCritic(
+
+    algorithm = BigThompsonSoftActorCritic(
         env=env,
         policy=policy,
         qf1=qf1,
         qf2=qf2,
+        pqf1=pqf1,
+        pqf2=pqf2,
+        prior_coef=10,
         vf=vf,
         #disc=disc,
         #skill_dim=skill_dim,
@@ -95,7 +101,7 @@ if __name__ == "__main__":
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(
-            num_epochs=2000,
+            num_epochs=1000,
             num_steps_per_epoch=1000,
             num_steps_per_eval=1000,
             batch_size=128,

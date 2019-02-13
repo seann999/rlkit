@@ -16,8 +16,8 @@ from gym.envs.classic_control import Continuous_MountainCarEnv
 import rlkit.torch.pytorch_util as ptu
 from rlkit.envs.wrappers import NormalizedBoxEnv
 from rlkit.launchers.launcher_util import setup_logger
-from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy
-from rlkit.torch.sac.sac import SoftActorCritic
+from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy, MultiTanhGaussianPolicy
+from rlkit.torch.sac.thompsac import ThompsonSoftActorCritic
 from rlkit.torch.sac.diayn import DIAYN
 from rlkit.torch.networks import FlattenMlp
 
@@ -49,39 +49,54 @@ def experiment(variant):
     skill_dim = 0#50
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
+    heads = 10
 
     net_size = variant['net_size']
     qf1 = FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
+        output_size=heads,
     )
     qf2 = FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
+        output_size=heads,
+    )
+    pqf1 = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=heads,
+    )
+    pqf2 = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=heads,
     )
     vf = FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim,
         output_size=1,
     )
-    policy = TanhGaussianPolicy(
+    policy = MultiTanhGaussianPolicy(
         hidden_sizes=[net_size, net_size],
         obs_dim=obs_dim + skill_dim,
         action_dim=action_dim,
-        #k=4,
+        heads=heads,
     )
     disc = FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim,
         output_size=skill_dim if skill_dim > 0 else 1,
     )
-    algorithm = SoftActorCritic(
+    algorithm = ThompsonSoftActorCritic(
         env=env,
         policy=policy,
         qf1=qf1,
         qf2=qf2,
+        pqf1=pqf1,
+        pqf2=pqf2,
+        prior_coef=3,
+        heads=heads,
         vf=vf,
         #disc=disc,
         #skill_dim=skill_dim,
@@ -95,7 +110,7 @@ if __name__ == "__main__":
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(
-            num_epochs=2000,
+            num_epochs=1000,
             num_steps_per_epoch=1000,
             num_steps_per_eval=1000,
             batch_size=128,

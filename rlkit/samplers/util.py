@@ -1,4 +1,5 @@
 import numpy as np
+import pygame
 
 
 def rollout(env, agent, max_path_length=np.inf, animated=False):
@@ -34,11 +35,23 @@ def rollout(env, agent, max_path_length=np.inf, animated=False):
     images = []
 
     if animated:
-        img = env.render('rgb_array', 640, 480)
+        try:
+            img = env.render('rgb_array', 640, 480)
+        except Exception as e:
+            img = env.render('rgb_array')
+            #print(e)
         #print(env.viewer.cam.fixedcamid, env.viewer.cam.type)
-        env.viewer.cam.fixedcamid = 0
-        env.viewer.cam.type = 2
+        #0 2
+        try:
+            env.viewer.cam.fixedcamid = -1
+            env.viewer.cam.type = 1
+            env.viewer.cam.trackbodyid = 0
+            env.viewer.cam.distance = 20
+            env.viewer.cam.elevation = -60
+        except:
+            pass
         
+        img = pygame.surfarray.array2d(env.viewer.screen)
         images.append(img)
     while path_length < max_path_length:
         a, agent_info = agent.get_action(o)
@@ -54,7 +67,12 @@ def rollout(env, agent, max_path_length=np.inf, animated=False):
             break
         o = next_o
         if animated:
-            img = env.render('rgb_array', 640, 480)
+            try:
+                img = env.render('rgb_array', 640, 480)
+            except Exception as e:
+                img = env.render('rgb_array')
+              
+            img = pygame.surfarray.array2d(env.viewer.screen)
             images.append(img)
 
     actions = np.array(actions)

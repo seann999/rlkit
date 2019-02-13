@@ -9,19 +9,18 @@ import matplotlib.pyplot as plt
 
 import numpy as np
 from gym.envs.mujoco import HalfCheetahEnv
-from gym.envs.mujoco import HumanoidEnv, InvertedPendulumEnv, ReacherEnv, HumanoidStandupEnv
-from gym.envs.mujoco import HopperEnv
+from gym.envs.mujoco import HumanoidEnv
+from gym.envs.mujoco import HopperEnv, HumanoidStandupEnv
 from gym.envs.classic_control import Continuous_MountainCarEnv
 
 import rlkit.torch.pytorch_util as ptu
 from rlkit.envs.wrappers import NormalizedBoxEnv
 from rlkit.launchers.launcher_util import setup_logger
 from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy
-from rlkit.torch.sac.sac import SoftActorCritic
+from rlkit.torch.sac.bsac import BootstrappedSoftActorCritic
 from rlkit.torch.sac.diayn import DIAYN
 from rlkit.torch.networks import FlattenMlp
 
-#from create_maze_env import create_maze_env
 from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
 from custom_env import create_swingup
 
@@ -54,12 +53,22 @@ def experiment(variant):
     qf1 = FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
+        output_size=10,
     )
     qf2 = FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
+        output_size=10,
+    )
+    prior1 = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=10,
+    )
+    prior2 = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=10,
     )
     vf = FlattenMlp(
         hidden_sizes=[net_size, net_size],
@@ -77,12 +86,16 @@ def experiment(variant):
         input_size=obs_dim,
         output_size=skill_dim if skill_dim > 0 else 1,
     )
-    algorithm = SoftActorCritic(
+    algorithm = BootstrappedSoftActorCritic(
         env=env,
         policy=policy,
         qf1=qf1,
         qf2=qf2,
+        pqf1=prior1,
+        pqf2=prior2,
         vf=vf,
+        beta=1,
+        prior_coef=3,
         #disc=disc,
         #skill_dim=skill_dim,
         **variant['algo_params']
@@ -95,7 +108,7 @@ if __name__ == "__main__":
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(
-            num_epochs=2000,
+            num_epochs=10000,
             num_steps_per_epoch=1000,
             num_steps_per_eval=1000,
             batch_size=128,

@@ -3,26 +3,31 @@ from collections import OrderedDict
 import numpy as np
 import torch.optim as optim
 from torch import nn as nn
-
+import gtimer as gt
 import torch
 import rlkit.torch.pytorch_util as ptu
 from rlkit.core.eval_util import create_stats_ordered_dict
 from rlkit.torch.torch_rl_algorithm import TorchRLAlgorithm
-from rlkit.torch.sac.policies import MakeDeterministic
+from rlkit.torch.sac.policies import MultiMakeDeterministic
+from rlkit.data_management.path_builder import PathBuilder
+from rlkit.core.rl_algorithm import set_to_train_mode, set_to_eval_mode
+from rlkit.torch.sac.rndsac import CustomReplayBuffer, get_dim
 
-
-class SoftActorCritic(TorchRLAlgorithm):
+class BigThompsonSoftActorCritic(TorchRLAlgorithm):
     def __init__(
             self,
             env,
             policy,
             qf1,
             qf2,
+            pqf1,
+            pqf2,
             vf,
 
             policy_lr=1e-3,
             qf_lr=1e-3,
             vf_lr=1e-3,
+            prior_coef=1,
             policy_mean_reg_weight=1e-3,
             policy_std_reg_weight=1e-3,
             policy_pre_activation_weight=0.,
@@ -33,24 +38,39 @@ class SoftActorCritic(TorchRLAlgorithm):
             plotter=None,
             render_eval_paths=False,
             eval_deterministic=True,
+            replay_buffer_size=1000000,
 
             use_automatic_entropy_tuning=True,
             target_entropy=None,
             **kwargs
     ):
         if eval_deterministic:
-            eval_policy = MakeDeterministic(policy)
+            eval_policy = MultiMakeDeterministic(policy)
         else:
             eval_policy = policy
+            
+        self.heads = 10
+        self.prior_coef = prior_coef
+        replay_buffer = CustomReplayBuffer(
+            replay_buffer_size,
+            env,
+            get_dim(env.observation_space) + self.heads
+        )
+            
         super().__init__(
             env=env,
             exploration_policy=policy,
             eval_policy=eval_policy,
+            replay_buffer=replay_buffer,
             **kwargs
         )
+        self.current_behavior_policy = 0
         self.policy = policy
         self.qf1 = qf1
         self.qf2 = qf2
+        self.pqf1 = pqf1
+        self.pqf2 = pqf2
+        
         self.vf = vf
         self.train_policy_with_reparameterization = (
             train_policy_with_reparameterization
@@ -67,6 +87,7 @@ class SoftActorCritic(TorchRLAlgorithm):
                 self.target_entropy = target_entropy
             else:
                 self.target_entropy = -np.prod(self.env.action_space.shape).item()  # heuristic value from Tuomas
+            
             self.log_alpha = ptu.zeros(1, requires_grad=True)
             self.alpha_optimizer = optimizer_class(
                 [self.log_alpha],
@@ -80,7 +101,7 @@ class SoftActorCritic(TorchRLAlgorithm):
         self.vf_criterion = nn.MSELoss()
 
         self.policy_optimizer = optimizer_class(
-            self.policy.parameters(),
+            policy.parameters(),
             lr=policy_lr,
         )
         self.qf1_optimizer = optimizer_class(
@@ -100,20 +121,27 @@ class SoftActorCritic(TorchRLAlgorithm):
         batch = self.get_batch()
         rewards = batch['rewards']
         terminals = batch['terminals']
-        obs = batch['observations']
+        obs = batch['observations'][:, :-self.heads]
+        mask = batch['observations'][:, -self.heads:]
         actions = batch['actions']
-        next_obs = batch['next_observations']
+        next_obs = batch['next_observations'][:, :-self.heads]
 
-        q1_pred = self.qf1(obs, actions)
-        q2_pred = self.qf2(obs, actions)
-        v_pred = self.vf(obs)
+        inp = [[obs, actions] for _ in range(10)]
+        q1_pred = self.qf1(inp) + self.prior_coef * self.pqf1(inp)
+        q2_pred = self.qf2(inp) + self.prior_coef * self.pqf2(inp)
+        
+        qf1_loss, qf2_loss = 0, 0
+
         # Make sure policy accounts for squashing functions like tanh correctly!
         policy_outputs = self.policy(
-                obs,
-                reparameterize=self.train_policy_with_reparameterization,
-                return_log_prob=True,
+            obs,
+            reparameterize=self.train_policy_with_reparameterization,
+            return_log_prob=True,
         )
         new_actions, policy_mean, policy_log_std, log_pi = policy_outputs[:4]
+        
+        # new_actions: 128 x 10 x 1
+
         if self.use_automatic_entropy_tuning:
             """
             Alpha Loss
@@ -130,46 +158,52 @@ class SoftActorCritic(TorchRLAlgorithm):
         """
         QF Loss
         """
-        #target_v_values = self.target_vf(next_obs)
         next_policy_outputs = self.policy(
-                next_obs,
-                reparameterize=self.train_policy_with_reparameterization,
-                return_log_prob=True,
+            next_obs,
+            reparameterize=self.train_policy_with_reparameterization,
+            return_log_prob=True,
         )
         next_new_actions, _, _, next_log_pi = next_policy_outputs[:4]
-        next_q_new_actions = torch.min(
-            self.target_qf1(next_obs, next_new_actions),
-            self.target_qf2(next_obs, next_new_actions),
-        )
-        target_v_values = next_q_new_actions - alpha*next_log_pi
+        # 128 x 10
         
+        def get_q(qf1, qf2, obs, actions):
+            inp = [[obs, actions[:, i, :]] for i in range(actions.shape[1])]
+            
+            q = torch.min(
+                self.target_qf1(inp) + self.prior_coef * self.pqf1(inp),
+                self.target_qf2(inp) + self.prior_coef * self.pqf2(inp),
+            )
+            
+            return q
+        
+        # 128 x 10
+        next_q_new_actions = get_q(self.target_qf1, self.target_qf2, next_obs, next_new_actions)
+        
+        # 128 x 10
+        target_v_values = next_q_new_actions - alpha*next_log_pi[:, torch.arange(self.heads), 0]
+
         q_target = rewards + (1. - terminals) * self.discount * target_v_values
-        qf1_loss = self.qf_criterion(q1_pred, q_target.detach())
-        qf2_loss = self.qf_criterion(q2_pred, q_target.detach())
+        qf1_loss = (((q1_pred - q_target.detach())**2.0) * mask).sum(1)
+        qf2_loss = (((q2_pred - q_target.detach())**2.0) * mask).sum(1)
 
         """
         VF Loss
         """
-        q_new_actions = torch.min(
-            self.qf1(obs, new_actions),
-            self.qf2(obs, new_actions),
-        )
-        #v_target = q_new_actions - alpha*log_pi
-        #vf_loss = 0.5 * self.vf_criterion(v_pred, v_target.detach())
+        q_new_actions = get_q(self.qf1, self.qf2, obs, new_actions)
 
         """
         Policy Loss
         """
         if self.train_policy_with_reparameterization:
-            kl_loss = (alpha*log_pi - q_new_actions).mean()
+            kl_loss = (alpha*log_pi[:, torch.arange(self.heads), 0] - q_new_actions).mean()
         else:
             #v_pred = q_new_actions - alpha*log_pi
             log_policy_target = q_new_actions# - v_pred
             kl_loss = (
                 log_pi * (alpha*log_pi - log_policy_target).detach()
             ).mean()
-        mean_reg_loss = self.policy_mean_reg_weight * (policy_mean**2).mean()
-        std_reg_loss = self.policy_std_reg_weight * (policy_log_std**2).mean()
+        mean_reg_loss = self.policy_mean_reg_weight * (policy_mean**2).sum(1).mean()
+        std_reg_loss = self.policy_std_reg_weight * (policy_log_std**2).sum(1).mean()
         pre_tanh_value = policy_outputs[-1]
         pre_activation_reg_loss = self.policy_pre_activation_weight * (
             (pre_tanh_value**2).sum(dim=1).mean()
@@ -181,11 +215,11 @@ class SoftActorCritic(TorchRLAlgorithm):
         Update networks
         """
         self.qf1_optimizer.zero_grad()
-        qf1_loss.backward()
+        qf1_loss.mean().backward()
         self.qf1_optimizer.step()
 
         self.qf2_optimizer.zero_grad()
-        qf2_loss.backward()
+        qf2_loss.mean().backward()
         self.qf2_optimizer.step()
 
         #self.vf_optimizer.zero_grad()
@@ -229,12 +263,12 @@ class SoftActorCritic(TorchRLAlgorithm):
             ))
             self.eval_statistics.update(create_stats_ordered_dict(
                 'Q2 Predictions',
-                ptu.get_numpy(q1_pred),
+                ptu.get_numpy(q2_pred),
             ))
-            self.eval_statistics.update(create_stats_ordered_dict(
-                'V Predictions',
-                ptu.get_numpy(v_pred),
-            ))
+            #self.eval_statistics.update(create_stats_ordered_dict(
+            #    'V Predictions',
+            #    ptu.get_numpy(v_pred),
+            #))
             self.eval_statistics.update(create_stats_ordered_dict(
                 'Log Pis',
                 ptu.get_numpy(log_pi),
@@ -250,21 +284,121 @@ class SoftActorCritic(TorchRLAlgorithm):
             if self.use_automatic_entropy_tuning:
                 self.eval_statistics['Alpha'] = alpha.item()
                 self.eval_statistics['Alpha Loss'] = alpha_loss.item()
+                
+    def train_online(self, start_epoch=0):
+        self._current_path_builder = PathBuilder()
+        observation = self._start_new_rollout()
+        for epoch in gt.timed_for(
+                range(start_epoch, self.num_epochs),
+                save_itrs=True,
+        ):
+            self._start_epoch(epoch)
+            set_to_train_mode(self.training_env)
+            for step in range(self.num_env_steps_per_epoch):
+                print(step)
+                observation = self._take_step_in_env(observation)
+                gt.stamp('sample')
+
+                self._try_to_train()
+                gt.stamp('train')
+
+            self.current_behavior_policy = np.random.randint(self.heads)
+            set_to_eval_mode(self.env)
+            self._try_to_eval(epoch)
+            gt.stamp('eval')
+            self._end_epoch(epoch)
+                
+    def _take_step_in_env(self, observation):
+        #action, agent_info = self._get_action_and_info(
+        #    observation,
+        #)
+        self.policy.set_num_steps_total(self._n_env_steps_total)
+        action, agent_info = self.policy.get_action(
+            observation,
+            self.current_behavior_policy,
+        )
+        
+        if self.render:
+            self.training_env.render()
+        next_ob, raw_reward, terminal, env_info = (
+            self.training_env.step(action)
+        )
+        self._n_env_steps_total += 1
+        reward = raw_reward * self.reward_scale
+        terminal = np.array([terminal])
+        reward = np.array([reward])
+        self._handle_step(
+            observation,
+            action,
+            reward,
+            next_ob,
+            terminal,
+            agent_info=agent_info,
+            env_info=env_info,
+        )
+        if terminal or len(self._current_path_builder) >= self.max_path_length:
+            self._handle_rollout_ending()
+            new_observation = self._start_new_rollout()
+        else:
+            new_observation = next_ob
+        return new_observation
+                
+    def _handle_step(
+            self,
+            observation,
+            action,
+            reward,
+            next_observation,
+            terminal,
+            agent_info,
+            env_info,
+    ):
+        """
+        Implement anything that needs to happen after every step
+        :return:
+        """
+        if self.heads == 1:
+            mask = [1]
+        else:
+            mask = np.random.randint(2, size=self.heads)
+            #mask = [1] * self.heads
+
+        observation = np.concatenate([observation, mask])
+        next_observation = np.concatenate([next_observation, np.zeros(self.heads)])
+        
+        self._current_path_builder.add_all(
+            observations=observation,
+            actions=action,
+            rewards=reward,
+            next_observations=next_observation,
+            terminals=terminal,
+            agent_infos=agent_info,
+            env_infos=env_info,
+        )
+        self.replay_buffer.add_sample(
+            observation=observation,
+            action=action,
+            reward=reward,
+            terminal=terminal,
+            next_observation=next_observation,
+            agent_info=agent_info,
+            env_info=env_info,
+        )
 
     @property
     def networks(self):
-        return [
-            self.policy,
+        nets = [
             self.qf1,
             self.qf2,
-            self.vf,
-            self.target_vf,
             self.target_qf1,
             self.target_qf2,
+            self.pqf1,
+            self.pqf2,
+            self.policy,
         ]
+        return nets
 
     def _update_target_network(self):
-        ptu.soft_update_from_to(self.vf, self.target_vf, self.soft_target_tau)
         ptu.soft_update_from_to(self.qf1, self.target_qf1, self.soft_target_tau)
         ptu.soft_update_from_to(self.qf2, self.target_qf2, self.soft_target_tau)
 
@@ -274,9 +408,9 @@ class SoftActorCritic(TorchRLAlgorithm):
             qf1=self.qf1,
             qf2=self.qf2,
             policy=self.policy,
-            vf=self.vf,
-            target_vf=self.target_vf,
             target_qf1=self.target_qf1,
             target_qf2=self.target_qf2,
+            pqf1=self.pqf1,
+            pqf2=self.pqf2,
         )
         return snapshot

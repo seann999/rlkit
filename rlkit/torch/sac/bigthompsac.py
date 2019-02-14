@@ -48,15 +48,15 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
             eval_policy = MultiMakeDeterministic(policy)
         else:
             eval_policy = policy
-            
-        self.heads = 10
+
+        self.heads = len(qf1.nets)
         self.prior_coef = prior_coef
         replay_buffer = CustomReplayBuffer(
             replay_buffer_size,
             env,
             get_dim(env.observation_space) + self.heads
         )
-            
+
         super().__init__(
             env=env,
             exploration_policy=policy,
@@ -70,7 +70,7 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
         self.qf2 = qf2
         self.pqf1 = pqf1
         self.pqf2 = pqf2
-        
+
         self.vf = vf
         self.train_policy_with_reparameterization = (
             train_policy_with_reparameterization
@@ -87,7 +87,7 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
                 self.target_entropy = target_entropy
             else:
                 self.target_entropy = -np.prod(self.env.action_space.shape).item()  # heuristic value from Tuomas
-            
+
             self.log_alpha = ptu.zeros(1, requires_grad=True)
             self.alpha_optimizer = optimizer_class(
                 [self.log_alpha],
@@ -126,10 +126,10 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
         actions = batch['actions']
         next_obs = batch['next_observations'][:, :-self.heads]
 
-        inp = [[obs, actions] for _ in range(10)]
+        inp = [[obs, actions] for _ in range(self.heads)]
         q1_pred = self.qf1(inp) + self.prior_coef * self.pqf1(inp)
         q2_pred = self.qf2(inp) + self.prior_coef * self.pqf2(inp)
-        
+
         qf1_loss, qf2_loss = 0, 0
 
         # Make sure policy accounts for squashing functions like tanh correctly!
@@ -139,7 +139,7 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
             return_log_prob=True,
         )
         new_actions, policy_mean, policy_log_std, log_pi = policy_outputs[:4]
-        
+
         # new_actions: 128 x 10 x 1
 
         if self.use_automatic_entropy_tuning:
@@ -165,20 +165,20 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         next_new_actions, _, _, next_log_pi = next_policy_outputs[:4]
         # 128 x 10
-        
+
         def get_q(qf1, qf2, obs, actions):
             inp = [[obs, actions[:, i, :]] for i in range(actions.shape[1])]
-            
+
             q = torch.min(
                 self.target_qf1(inp) + self.prior_coef * self.pqf1(inp),
                 self.target_qf2(inp) + self.prior_coef * self.pqf2(inp),
             )
-            
+
             return q
-        
+
         # 128 x 10
         next_q_new_actions = get_q(self.target_qf1, self.target_qf2, next_obs, next_new_actions)
-        
+
         # 128 x 10
         target_v_values = next_q_new_actions - alpha*next_log_pi[:, torch.arange(self.heads), 0]
 
@@ -243,14 +243,14 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
             self.eval_statistics['Policy Loss'] = np.mean(ptu.get_numpy(
                 policy_loss
             ))
-            
+
             try:
                 self.eval_statistics['gmm mus mean'] = np.mean(ptu.get_numpy(self.policy.mean))
                 self.eval_statistics['gmm log w mean'] = np.mean(ptu.get_numpy(self.policy.log_w))
                 self.eval_statistics['gmm log std mean'] = np.mean(ptu.get_numpy(self.policy.log_std))
             except:
                 pass
-                
+
             self.eval_statistics['KL Loss'] = np.mean(ptu.get_numpy(
                 kl_loss
             ))
@@ -284,7 +284,7 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
             if self.use_automatic_entropy_tuning:
                 self.eval_statistics['Alpha'] = alpha.item()
                 self.eval_statistics['Alpha Loss'] = alpha_loss.item()
-                
+
     def train_online(self, start_epoch=0):
         self._current_path_builder = PathBuilder()
         observation = self._start_new_rollout()
@@ -295,7 +295,6 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
             self._start_epoch(epoch)
             set_to_train_mode(self.training_env)
             for step in range(self.num_env_steps_per_epoch):
-                print(step)
                 observation = self._take_step_in_env(observation)
                 gt.stamp('sample')
 
@@ -307,7 +306,7 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
             self._try_to_eval(epoch)
             gt.stamp('eval')
             self._end_epoch(epoch)
-                
+
     def _take_step_in_env(self, observation):
         #action, agent_info = self._get_action_and_info(
         #    observation,
@@ -317,7 +316,7 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
             observation,
             self.current_behavior_policy,
         )
-        
+
         if self.render:
             self.training_env.render()
         next_ob, raw_reward, terminal, env_info = (
@@ -342,7 +341,7 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
         else:
             new_observation = next_ob
         return new_observation
-                
+
     def _handle_step(
             self,
             observation,
@@ -365,7 +364,7 @@ class BigThompsonSoftActorCritic(TorchRLAlgorithm):
 
         observation = np.concatenate([observation, mask])
         next_observation = np.concatenate([next_observation, np.zeros(self.heads)])
-        
+
         self._current_path_builder.add_all(
             observations=observation,
             actions=action,

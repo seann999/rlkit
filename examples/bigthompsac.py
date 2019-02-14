@@ -8,9 +8,6 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 
 import numpy as np
-from gym.envs.mujoco import HalfCheetahEnv
-from gym.envs.mujoco import HumanoidEnv, InvertedPendulumEnv, ReacherEnv, HumanoidStandupEnv
-from gym.envs.mujoco import HopperEnv
 from gym.envs.classic_control import Continuous_MountainCarEnv
 
 import rlkit.torch.pytorch_util as ptu
@@ -21,9 +18,7 @@ from rlkit.torch.sac.bigthompsac import BigThompsonSoftActorCritic
 from rlkit.torch.sac.diayn import DIAYN
 from rlkit.torch.networks import EnsembleFlattenMlp, FlattenMlp
 
-#from create_maze_env import create_maze_env
-from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
-from custom_env import create_swingup
+from box2d.cartpole_swingup_sparse_env import CartpoleSwingupSparseEnv
 
 from diayn import DIAYNWrappedEnv
 
@@ -38,32 +33,34 @@ torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = True
 
 def experiment(variant):
-    env = NormalizedBoxEnv(create_swingup())
+    env = NormalizedBoxEnv(CartpoleSwingupSparseEnv())
 
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
 
+    heads = 5
+
     net_size = variant['net_size']
     qf1 = EnsembleFlattenMlp(
-        10,
+        heads,
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + action_dim,
         output_size=1,
     )
     qf2 = EnsembleFlattenMlp(
-        10,
+        heads,
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + action_dim,
         output_size=1,
     )
     pqf1 = EnsembleFlattenMlp(
-        10,
+        heads,
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + action_dim,
         output_size=1,
     )
     pqf2 = EnsembleFlattenMlp(
-        10,
+        heads,
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + action_dim,
         output_size=1,
@@ -77,7 +74,7 @@ def experiment(variant):
         hidden_sizes=[net_size, net_size],
         obs_dim=obs_dim,
         action_dim=action_dim,
-        heads=10,
+        heads=heads,
     )
 
     algorithm = BigThompsonSoftActorCritic(
@@ -97,7 +94,7 @@ def experiment(variant):
     algorithm.train()
 
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(

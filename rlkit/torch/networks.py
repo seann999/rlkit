@@ -85,22 +85,22 @@ class EnsembleFlattenMlp(PyTorchModule):
         self.save_init_params(locals())
         super().__init__()
         self.nets = []
-        
+
         for i in range(n_nets):
             mlp = Mlp(**kwargs)
             self.nets.append(mlp)
             self.add_module('mlp_' + str(i), mlp)
-            
+
     def forward(self, inputs, **kwargs):
-        outputs = parallel_apply(self.nets, [torch.cat(tup, dim=1) for tup in inputs])
+        outputs = parallel_apply(self.nets, [torch.cat(tup, dim=1) for tup in inputs], devices=list(range(len(self.nets))))
         #outputs = []
-        
+
         #for net in self.nets:
         #out = net.forward(flat_inputs, **kwargs)
         #outputs.append(out)
-            
+
         flat_outputs = torch.cat(outputs, dim=1)
-        
+
         return flat_outputs
 
 class FlattenMlp(Mlp):

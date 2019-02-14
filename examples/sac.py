@@ -8,9 +8,6 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 
 import numpy as np
-from gym.envs.mujoco import HalfCheetahEnv
-from gym.envs.mujoco import HumanoidEnv, InvertedPendulumEnv, ReacherEnv, HumanoidStandupEnv
-from gym.envs.mujoco import HopperEnv
 from gym.envs.classic_control import Continuous_MountainCarEnv
 
 import rlkit.torch.pytorch_util as ptu
@@ -22,8 +19,9 @@ from rlkit.torch.sac.diayn import DIAYN
 from rlkit.torch.networks import FlattenMlp
 
 #from create_maze_env import create_maze_env
-from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
-from custom_env import create_swingup
+from box2d.cartpole_swingup_sparse_env import CartpoleSwingupSparseEnv
+#from custom_env import create_swingup
+#from custom_env2 import create_swingup
 
 from diayn import DIAYNWrappedEnv
 
@@ -38,7 +36,7 @@ torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = True
 
 def experiment(variant):
-    env = NormalizedBoxEnv(create_swingup())
+    env = NormalizedBoxEnv(CartpoleSwingupSparseEnv())
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
     #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))
@@ -91,7 +89,7 @@ def experiment(variant):
     algorithm.train()
 
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(

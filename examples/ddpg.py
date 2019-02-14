@@ -1,8 +1,12 @@
 """
 Example of running PyTorch implementation of DDPG on HalfCheetah.
 """
-from gym.envs.mujoco import HalfCheetahEnv
-#from gym.envs.classic_control import Continuous_MountainCarEnv
+import sys
+sys.path.insert(0, ".")
+
+#from gym.envs.mujoco import HalfCheetahEnv
+from gym.envs.classic_control import Continuous_MountainCarEnv
+from custom_env2 import create_swingup
 
 from rlkit.envs.wrappers import NormalizedBoxEnv
 from rlkit.exploration_strategies.base import (
@@ -16,8 +20,8 @@ import rlkit.torch.pytorch_util as ptu
 
 
 def experiment(variant):
-    env = NormalizedBoxEnv(HalfCheetahEnv())
-    #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
+    #env = NormalizedBoxEnv(HalfCheetahEnv())
+    env = NormalizedBoxEnv(create_swingup())
     # Or for a specific version:
     # import gym
     # env = NormalizedBoxEnv(gym.make('HalfCheetah-v1'))

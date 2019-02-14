@@ -28,7 +28,7 @@ from diayn import DIAYNWrappedEnv
 import argparse
 parser     = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=0)
-parser.add_argument('--dir', type=str, default="test")
+parser.add_argument('--dir', type=str, default="results")
 args = parser.parse_args()
 
 import torch

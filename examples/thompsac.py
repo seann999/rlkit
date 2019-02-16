@@ -19,13 +19,15 @@ from rlkit.launchers.launcher_util import setup_logger
 from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy, MultiTanhGaussianPolicy
 from rlkit.torch.sac.thompsac import ThompsonSoftActorCritic
 from rlkit.torch.sac.diayn import DIAYN
-from rlkit.torch.networks import FlattenMlp
+from rlkit.torch.networks import SplitFlattenMlp
 
 #from create_maze_env import create_maze_env
 from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
-from custom_env import create_swingup
+from box2d.cartpole_swingup_sparse_env import CartpoleSwingupSparseEnv
 
 from diayn import DIAYNWrappedEnv
+
+import torch.nn as nn
 
 import argparse
 parser     = argparse.ArgumentParser()
@@ -41,7 +43,7 @@ torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = True
 
 def experiment(variant):
-    env = NormalizedBoxEnv(create_swingup())
+    env = NormalizedBoxEnv(CartpoleSwingupSparseEnv())
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
     #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))
@@ -52,44 +54,44 @@ def experiment(variant):
     skill_dim = 0#50
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
-    heads = 1
+    heads = 10
 
     net_size = variant['net_size']
-    qf1 = FlattenMlp(
+    qf1 = SplitFlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=heads,
+        output_size=1,
+        heads=heads,
     )
-    qf2 = FlattenMlp(
+    qf2 = SplitFlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=heads,
+        output_size=1,
+        heads=heads,
     )
-    pqf1 = FlattenMlp(
+    pqf1 = SplitFlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=heads,
+        output_size=1,
+        heads=heads,
     )
-    pqf2 = FlattenMlp(
+    pqf2 = SplitFlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=heads,
+        output_size=1,
+        heads=heads,
     )
-    vf = FlattenMlp(
+    vf = SplitFlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim,
         output_size=1,
+        heads=heads,
     )
     policy = MultiTanhGaussianPolicy(
         hidden_sizes=[net_size, net_size],
         obs_dim=obs_dim + skill_dim,
         action_dim=action_dim,
         heads=heads,
-    )
-    disc = FlattenMlp(
-        hidden_sizes=[net_size, net_size],
-        input_size=obs_dim,
-        output_size=skill_dim if skill_dim > 0 else 1,
     )
     algorithm = ThompsonSoftActorCritic(
         env=env,

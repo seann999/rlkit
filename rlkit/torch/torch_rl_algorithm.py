@@ -6,6 +6,7 @@ import numpy as np
 from rlkit.core.rl_algorithm import RLAlgorithm
 from rlkit.torch import pytorch_util as ptu
 from rlkit.torch.core import PyTorchModule
+import torch.nn as nn
 
 
 class TorchRLAlgorithm(RLAlgorithm, metaclass=abc.ABCMeta):
@@ -26,7 +27,7 @@ class TorchRLAlgorithm(RLAlgorithm, metaclass=abc.ABCMeta):
         if device is None:
             device = ptu.device
         for net in self.networks:
-            net.to(device)
+            net.cuda()#.to(device)
 
 
 def _elem_or_tuple_to_variable(elem_or_tuple):

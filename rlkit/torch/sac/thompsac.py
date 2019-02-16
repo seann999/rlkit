@@ -170,25 +170,35 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         next_new_actions, _, _, next_log_pi = next_policy_outputs[:4]
         # 128 x 10
         
+#         def get_q(qf1, qf2, obs, actions):
+#             # actions: 128 x 10 x 3
+            
+#             # 1280 x 3
+#             flat_actions = actions.view(-1, actions.shape[2])
+            
+#             # 128 x 5 -> 1280 x 5
+#             expand_obs = obs.repeat(1, self.heads).view(-1, obs.shape[1])
+            
+#             # 1280 x 10
+#             q = torch.min(
+#                 self.target_qf1(expand_obs, flat_actions) + self.prior_coef * self.pqf1(expand_obs, flat_actions) + self.prior_offset,
+#                 self.target_qf2(expand_obs, flat_actions) + self.prior_coef * self.pqf2(expand_obs, flat_actions) + self.prior_offset,
+#             )
+            
+#             # 128 x 10 x 10
+#             q = q.view(-1, self.heads, self.heads)
+#             q = q[:, torch.arange(self.heads), torch.arange(self.heads)]
+            
+#             return q
+
         def get_q(qf1, qf2, obs, actions):
-            # actions: 128 x 10 x 3
-            
-            # 1280 x 3
-            flat_actions = actions.view(-1, actions.shape[2])
-            
-            # 128 x 5 -> 1280 x 5
-            expand_obs = obs.repeat(1, self.heads).view(-1, obs.shape[1])
-            
-            # 1280 x 10
+            inp = [[obs, actions[:, i, :]] for i in range(actions.shape[1])]
+
             q = torch.min(
-                self.target_qf1(expand_obs, flat_actions) + self.prior_coef * self.pqf1(expand_obs, flat_actions) + self.prior_offset,
-                self.target_qf2(expand_obs, flat_actions) + self.prior_coef * self.pqf2(expand_obs, flat_actions) + self.prior_offset,
+                self.target_qf1(inp) + self.prior_coef * self.pqf1(inp) + self.prior_offset,
+                self.target_qf2(inp) + self.prior_coef * self.pqf2(inp) + self.prior_offset,
             )
-            
-            # 128 x 10 x 10
-            q = q.view(-1, self.heads, self.heads)
-            q = q[:, torch.arange(self.heads), torch.arange(self.heads)]
-            
+
             return q
         
         # 128 x 10

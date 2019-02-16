@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 from rlkit.policies.base import ExplorationPolicy, Policy
 from rlkit.torch.distributions import TanhNormal
-from rlkit.torch.networks import Mlp
+from rlkit.torch.networks import SplitMlp, Mlp
 
 from torch.distributions import Categorical, Normal
 
@@ -17,7 +17,7 @@ LOG_SIG_MIN = -5
 LOG_W_MIN = -10
 
 
-class MultiTanhGaussianPolicy(Mlp, ExplorationPolicy):
+class MultiTanhGaussianPolicy(SplitMlp, ExplorationPolicy):
     """
     Usage:
 
@@ -49,7 +49,8 @@ class MultiTanhGaussianPolicy(Mlp, ExplorationPolicy):
         super().__init__(
             hidden_sizes,
             input_size=obs_dim,
-            output_size=action_dim * heads,
+            output_size=action_dim,
+            heads=heads,
             init_w=init_w,
             **kwargs
         )
@@ -62,7 +63,7 @@ class MultiTanhGaussianPolicy(Mlp, ExplorationPolicy):
             last_hidden_size = obs_dim
             if len(hidden_sizes) > 0:
                 last_hidden_size = hidden_sizes[-1]
-            self.last_fc_log_std = nn.Linear(last_hidden_size, action_dim * heads)
+            self.last_fc_log_std =  nn.Conv1d(last_hidden_size * heads, action_dim * heads, 1, groups=heads)
             self.last_fc_log_std.weight.data.uniform_(-init_w, init_w)
             self.last_fc_log_std.bias.data.uniform_(-init_w, init_w)
         else:
@@ -89,12 +90,13 @@ class MultiTanhGaussianPolicy(Mlp, ExplorationPolicy):
         :param deterministic: If True, do not sample
         :param return_log_prob: If True, return a sample and its log probability
         """
-        h = obs
-        for i, fc in enumerate(self.fcs):
+        h = obs.unsqueeze(2).repeat(1, self.heads, 1)
+        for i, fc in enumerate(self.convs):
             h = self.hidden_activation(fc(h))
-        mean = self.last_fc(h) # actions * heads
+        mean = self.last_conv(h).squeeze(2) # actions * heads
+
         if self.std is None:
-            log_std = self.last_fc_log_std(h)
+            log_std = self.last_fc_log_std(h).squeeze(2)
             log_std = torch.clamp(log_std, LOG_SIG_MIN, LOG_SIG_MAX)
             std = torch.exp(log_std)
         else:

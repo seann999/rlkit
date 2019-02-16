@@ -30,6 +30,9 @@ from diayn import DIAYNWrappedEnv
 import argparse
 parser     = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=0)
+parser.add_argument('--drop', type=float, default=0.5)
+parser.add_argument('--prior', type=float, default=10)
+parser.add_argument('--prior-offset', type=float, default=0)
 parser.add_argument('--dir', type=str, default="test")
 args = parser.parse_args()
 
@@ -49,7 +52,7 @@ def experiment(variant):
     skill_dim = 0#50
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
-    heads = 10
+    heads = 1
 
     net_size = variant['net_size']
     qf1 = FlattenMlp(
@@ -95,7 +98,9 @@ def experiment(variant):
         qf2=qf2,
         pqf1=pqf1,
         pqf2=pqf2,
-        prior_coef=3,
+        prior_coef=args.prior,
+        droprate=args.drop,
+        prior_offset=args.prior_offset,
         heads=heads,
         vf=vf,
         #disc=disc,
@@ -110,7 +115,7 @@ if __name__ == "__main__":
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(
-            num_epochs=1000,
+            num_epochs=300,
             num_steps_per_epoch=1000,
             num_steps_per_eval=1000,
             batch_size=128,

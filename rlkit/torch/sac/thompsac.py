@@ -27,7 +27,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             policy_lr=1e-3,
             qf_lr=1e-3,
             vf_lr=1e-3,
+            droprate=0.5,
             prior_coef=1,
+            prior_offset=0,
             heads=10,
             policy_mean_reg_weight=1e-3,
             policy_std_reg_weight=1e-3,
@@ -71,7 +73,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.qf2 = qf2
         self.pqf1 = pqf1
         self.pqf2 = pqf2
-        
+        self.droprate = droprate
         self.vf = vf
         self.train_policy_with_reparameterization = (
             train_policy_with_reparameterization
@@ -94,6 +96,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 [self.log_alpha],
                 lr=policy_lr,
             )
+            
+        self.prior_offset = prior_offset
 
         self.target_vf = vf.copy()
         self.target_qf1 = qf1.copy()
@@ -127,8 +131,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         actions = batch['actions']
         next_obs = batch['next_observations'][:, :-self.heads]
 
-        q1_pred = self.qf1(obs, actions) + self.prior_coef * self.pqf1(obs, actions)
-        q2_pred = self.qf2(obs, actions) + self.prior_coef * self.pqf2(obs, actions)
+        q1_pred = self.qf1(obs, actions) + self.prior_coef * self.pqf1(obs, actions) + self.prior_offset
+        q2_pred = self.qf2(obs, actions) + self.prior_coef * self.pqf2(obs, actions) + self.prior_offset
         
         qf1_loss, qf2_loss = 0, 0
 
@@ -177,8 +181,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             
             # 1280 x 10
             q = torch.min(
-                self.target_qf1(expand_obs, flat_actions) + self.prior_coef * self.pqf1(expand_obs, flat_actions),
-                self.target_qf2(expand_obs, flat_actions) + self.prior_coef * self.pqf2(expand_obs, flat_actions),
+                self.target_qf1(expand_obs, flat_actions) + self.prior_coef * self.pqf1(expand_obs, flat_actions) + self.prior_offset,
+                self.target_qf2(expand_obs, flat_actions) + self.prior_coef * self.pqf2(expand_obs, flat_actions) + self.prior_offset,
             )
             
             # 128 x 10 x 10
@@ -370,7 +374,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         if self.heads == 1:
             mask = [1]
         else:
-            mask = np.random.randint(2, size=self.heads)
+            mask = np.array([np.random.uniform() > self.droprate for _ in range(self.heads)])#np.random.randint(2, size=self.heads)
             #mask = [1] * self.heads
 
         observation = np.concatenate([observation, mask])

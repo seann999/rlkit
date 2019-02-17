@@ -6,7 +6,6 @@ import numpy as np
 from rlkit.core.rl_algorithm import RLAlgorithm
 from rlkit.torch import pytorch_util as ptu
 from rlkit.torch.core import PyTorchModule
-import torch.nn as nn
 
 
 class TorchRLAlgorithm(RLAlgorithm, metaclass=abc.ABCMeta):
@@ -28,6 +27,10 @@ class TorchRLAlgorithm(RLAlgorithm, metaclass=abc.ABCMeta):
             device = ptu.device
         for net in self.networks:
             net.to(device)
+<<<<<<< HEAD
+=======
+
+>>>>>>> parent of 3037648... synced thompsac
 
 def _elem_or_tuple_to_variable(elem_or_tuple):
     if isinstance(elem_or_tuple, tuple):

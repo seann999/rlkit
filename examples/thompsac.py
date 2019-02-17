@@ -16,13 +16,22 @@ from gym.envs.mujoco import HumanoidEnv, InvertedPendulumEnv, ReacherEnv, Humano
 from gym.envs.mujoco import HopperEnv
 from gym.envs.classic_control import Continuous_MountainCarEnv
 
+<<<<<<< HEAD
+=======
+import rlkit.torch.pytorch_util as ptu
+from rlkit.envs.wrappers import NormalizedBoxEnv
+from rlkit.launchers.launcher_util import setup_logger
+from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy, MultiTanhGaussianPolicy
+from rlkit.torch.sac.thompsac import ThompsonSoftActorCritic
+from rlkit.torch.sac.diayn import DIAYN
+from rlkit.torch.networks import FlattenMlp
+
+>>>>>>> parent of 3037648... synced thompsac
 #from create_maze_env import create_maze_env
 from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
-from box2d.cartpole_swingup_sparse_env import CartpoleSwingupSparseEnv
+from custom_env import create_swingup
 
 from diayn import DIAYNWrappedEnv
-
-import torch.nn as nn
 
 import argparse
 parser     = argparse.ArgumentParser()
@@ -39,6 +48,7 @@ from rlkit.launchers.launcher_util import setup_logger
 
 
 def experiment(variant):
+<<<<<<< HEAD
     import rlkit.torch.pytorch_util as ptu
     from rlkit.envs.wrappers import NormalizedBoxEnv
     
@@ -48,6 +58,9 @@ def experiment(variant):
     from rlkit.torch.networks import FlattenMlp, SplitFlattenMlp
 
     env = NormalizedBoxEnv(CartpoleSwingupSparseEnv())
+=======
+    env = NormalizedBoxEnv(create_swingup())
+>>>>>>> parent of 3037648... synced thompsac
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
     #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))
@@ -58,9 +71,10 @@ def experiment(variant):
     skill_dim = 0#50
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
-    heads = 10
+    heads = 1
 
     net_size = variant['net_size']
+<<<<<<< HEAD
     qf1s = [FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
@@ -86,6 +100,44 @@ def experiment(variant):
         obs_dim=obs_dim + skill_dim,
         action_dim=action_dim,
     ) for _ in range(heads)]
+=======
+    qf1 = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=heads,
+    )
+    qf2 = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=heads,
+    )
+    pqf1 = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=heads,
+    )
+    pqf2 = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=heads,
+    )
+    vf = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim + skill_dim,
+        output_size=1,
+    )
+    policy = MultiTanhGaussianPolicy(
+        hidden_sizes=[net_size, net_size],
+        obs_dim=obs_dim + skill_dim,
+        action_dim=action_dim,
+        heads=heads,
+    )
+    disc = FlattenMlp(
+        hidden_sizes=[net_size, net_size],
+        input_size=obs_dim,
+        output_size=skill_dim if skill_dim > 0 else 1,
+    )
+>>>>>>> parent of 3037648... synced thompsac
     algorithm = ThompsonSoftActorCritic(
         env=env,
         policies=policies,

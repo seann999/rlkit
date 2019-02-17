@@ -13,7 +13,6 @@ from rlkit.torch.core import PyTorchModule
 from rlkit.torch.data_management.normalizer import TorchFixedNormalizer
 from rlkit.torch.modules import LayerNorm
 
-import time
 
 def identity(x):
     return x
@@ -80,117 +79,29 @@ class Mlp(PyTorchModule):
             return output, preactivation
         else:
             return output
-        
-class SplitMlp(PyTorchModule):
-    def __init__(
-            self,
-            hidden_sizes,
-            output_size,
-            input_size,
-            heads,
-            init_w=3e-3,
-            hidden_activation=F.relu,
-            output_activation=identity,
-            hidden_init=torch.nn.init.xavier_uniform_,#ptu.fanin_init,
-            b_init_value=0,
-            layer_norm=False,
-            layer_norm_kwargs=None,
-    ):
+
+class EnsembleFlattenMlp(PyTorchModule):
+    def __init__(self, n_nets, **kwargs):
         self.save_init_params(locals())
         super().__init__()
+        self.nets = []
 
-        if layer_norm_kwargs is None:
-            layer_norm_kwargs = dict()
+        for i in range(n_nets):
+            mlp = Mlp(**kwargs)
+            self.nets.append(mlp)
+            self.add_module('mlp_' + str(i), mlp)
 
-        self.input_size = input_size
-        self.output_size = output_size
-        self.hidden_activation = hidden_activation
-        self.output_activation = output_activation
-        self.layer_norm = layer_norm
-        self.heads = heads
-        self.convs = []
-        self.layer_norms = []
-        in_size = input_size
+    def forward(self, inputs, **kwargs):
+        outputs = parallel_apply(self.nets, [torch.cat(tup, dim=1) for tup in inputs], devices=list(range(len(self.nets))))
+        #outputs = []
 
-        for i, next_size in enumerate(hidden_sizes):
-            fc = nn.Conv1d(in_size * heads, next_size * heads, 1, groups=heads)
-            in_size = next_size
-            hidden_init(fc.weight)
-            fc.bias.data.fill_(0)
-            self.__setattr__("fc{}".format(i), fc)
-            self.convs.append(fc)
+        #for net in self.nets:
+        #out = net.forward(flat_inputs, **kwargs)
+        #outputs.append(out)
 
-            if self.layer_norm:
-                ln = LayerNorm(next_size)
-                self.__setattr__("layer_norm{}".format(i), ln)
-                self.layer_norms.append(ln)
+        flat_outputs = torch.cat(outputs, dim=1)
 
-        self.last_conv = nn.Conv1d(in_size * heads, output_size * heads, 1, groups=heads)
-        hidden_init(self.last_conv.weight)
-        self.last_conv.bias.data.fill_(b_init_value)
-        #self.last_fc.weight.data.uniform_(-init_w, init_w)
-        #self.last_fc.bias.data.uniform_(-init_w, init_w)
-
-    def forward(self, input, return_preactivations=False):
-        if len(input[0]) == self.heads:
-            tensors = [vec for vecs in input[0] for vec in vecs]
-            h = torch.cat(tensors, 1).unsqueeze(2)
-        else:
-            h = input.unsqueeze(2).repeat(1, self.heads, 1)
-            
-        for i, conv in enumerate(self.convs):
-            h = conv(h)
-            if self.layer_norm and i < len(self.fcs) - 1:
-                h = self.layer_norms[i](h)
-            h = self.hidden_activation(h)
-        preactivation = self.last_conv(h)
-
-        output = self.output_activation(preactivation)
-        output = output.squeeze(2)
-        if return_preactivations:
-            return output, preactivation
-        else:
-            return output
-
-# class EnsembleFlattenMlp(PyTorchModule):
-#     def __init__(self, n_nets, **kwargs):
-#         self.save_init_params(locals())
-#         super().__init__()
-#         self.nets = []
-
-#         for i in range(n_nets):
-#             mlp = Mlp(**kwargs)
-#             self.nets.append(mlp)
-#             self.add_module('mlp_' + str(i), mlp)
-
-#     def forward(self, inputs, **kwargs):
-#         start = time.time()
-        
-#         outputs = parallel_apply(self.nets, [torch.cat(tup, dim=1) for tup in inputs], devices=[i // 4 for i in range(len(self.nets))])
-        
-#         print(time.time() - start)
-#         #outputs = []
-
-#         #for net in self.nets:
-#         #out = net.forward(flat_inputs, **kwargs)
-#         #outputs.append(out)
-
-#         flat_outputs = torch.cat(outputs, dim=1)
-
-#         return flat_outputs
-    
-class SplitFlattenMlp(SplitMlp):
-    """
-    Flatten inputs along dimension 1 and then pass through MLP.
-    """
-
-    def forward(self, *inputs, **kwargs):
-        #print(len(inputs), len(inputs[0]), isinstance(inputs, list), isinstance(inputs[0], list))
-        if isinstance(inputs[0], list):
-            flat_inputs = inputs
-        else:
-            flat_inputs = torch.cat(inputs, dim=1)
-        return super().forward(flat_inputs, **kwargs)
+        return flat_outputs
 
 class FlattenMlp(Mlp):
     """

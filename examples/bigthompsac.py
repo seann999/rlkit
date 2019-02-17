@@ -26,7 +26,6 @@ import argparse
 parser     = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--dir', type=str, default="test")
-parser.add_argument('--heads', type=int, default=5)
 args = parser.parse_args()
 
 import torch
@@ -39,7 +38,7 @@ def experiment(variant):
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
 
-    heads = args.heads
+    heads = 5
 
     net_size = variant['net_size']
     qf1 = EnsembleFlattenMlp(

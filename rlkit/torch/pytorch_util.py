@@ -45,7 +45,7 @@ GPU wrappers
 """
 
 _use_gpu = True
-device = 0
+device = torch.device('cuda:0')#torch.device('cpu:0')#0
 
 
 def set_gpu_mode(mode, gpu_id=0):

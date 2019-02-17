@@ -27,8 +27,7 @@ class TorchRLAlgorithm(RLAlgorithm, metaclass=abc.ABCMeta):
         if device is None:
             device = ptu.device
         for net in self.networks:
-            net.cuda()#.to(device)
-
+            net.to(device)
 
 def _elem_or_tuple_to_variable(elem_or_tuple):
     if isinstance(elem_or_tuple, tuple):

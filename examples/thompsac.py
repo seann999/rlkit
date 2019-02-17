@@ -1,3 +1,6 @@
+
+
+
 """
 Run PyTorch Soft Actor Critic on HalfCheetahEnv.
 
@@ -12,14 +15,6 @@ from gym.envs.mujoco import HalfCheetahEnv
 from gym.envs.mujoco import HumanoidEnv, InvertedPendulumEnv, ReacherEnv, HumanoidStandupEnv
 from gym.envs.mujoco import HopperEnv
 from gym.envs.classic_control import Continuous_MountainCarEnv
-
-import rlkit.torch.pytorch_util as ptu
-from rlkit.envs.wrappers import NormalizedBoxEnv
-from rlkit.launchers.launcher_util import setup_logger
-from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy, MultiTanhGaussianPolicy
-from rlkit.torch.sac.thompsac import ThompsonSoftActorCritic
-from rlkit.torch.sac.diayn import DIAYN
-from rlkit.torch.networks import SplitFlattenMlp
 
 #from create_maze_env import create_maze_env
 from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
@@ -39,10 +34,19 @@ parser.add_argument('--dir', type=str, default="test")
 args = parser.parse_args()
 
 import torch
-torch.manual_seed(args.seed)
-torch.backends.cudnn.deterministic = True
+from rlkit.launchers.launcher_util import setup_logger
+#torch.manual_seed(args.seed)
+
 
 def experiment(variant):
+    import rlkit.torch.pytorch_util as ptu
+    from rlkit.envs.wrappers import NormalizedBoxEnv
+    
+    from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy, MultiTanhGaussianPolicy
+    from rlkit.torch.sac.thompsac import ThompsonSoftActorCritic
+    from rlkit.torch.sac.diayn import DIAYN
+    from rlkit.torch.networks import FlattenMlp, SplitFlattenMlp
+
     env = NormalizedBoxEnv(CartpoleSwingupSparseEnv())
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
@@ -57,56 +61,43 @@ def experiment(variant):
     heads = 10
 
     net_size = variant['net_size']
-    qf1 = SplitFlattenMlp(
+    qf1s = [FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
         output_size=1,
-        heads=heads,
-    )
-    qf2 = SplitFlattenMlp(
+    ) for _ in range(heads)]
+    qf2s = [FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
         output_size=1,
-        heads=heads,
-    )
-    pqf1 = SplitFlattenMlp(
+    ) for _ in range(heads)]
+    pqf1s = [FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
         output_size=1,
-        heads=heads,
-    )
-    pqf2 = SplitFlattenMlp(
+    ) for _ in range(heads)]
+    pqf2s = [FlattenMlp(
         hidden_sizes=[net_size, net_size],
         input_size=obs_dim + skill_dim + action_dim,
         output_size=1,
-        heads=heads,
-    )
-    vf = SplitFlattenMlp(
-        hidden_sizes=[net_size, net_size],
-        input_size=obs_dim + skill_dim,
-        output_size=1,
-        heads=heads,
-    )
-    policy = MultiTanhGaussianPolicy(
+    ) for _ in range(heads)]
+    policies = [TanhGaussianPolicy(
         hidden_sizes=[net_size, net_size],
         obs_dim=obs_dim + skill_dim,
         action_dim=action_dim,
-        heads=heads,
-    )
+    ) for _ in range(heads)]
     algorithm = ThompsonSoftActorCritic(
         env=env,
-        policy=policy,
-        qf1=qf1,
-        qf2=qf2,
-        pqf1=pqf1,
-        pqf2=pqf2,
+        policies=policies,
+        qf1s=qf1s,
+        qf2s=qf2s,
+        pqf1s=pqf1s,
+        pqf2s=pqf2s,
         prior_coef=args.prior,
         droprate=args.drop,
         prior_offset=args.prior_offset,
         heads=heads,
-        vf=vf,
-        #disc=disc,
-        #skill_dim=skill_dim,
+
         **variant['algo_params']
     )
     algorithm.to(ptu.device)
@@ -114,6 +105,15 @@ def experiment(variant):
 
 
 if __name__ == "__main__": 
+    import torch.multiprocessing as mp
+    try:
+        mp.set_start_method('spawn')
+    except RuntimeError:
+        pass
+    #mp.set_start_method('spawn')
+    
+    torch.backends.cudnn.deterministic = True
+    
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(
@@ -132,7 +132,6 @@ if __name__ == "__main__":
             soft_target_tau=0.005,
             policy_lr=3E-4,
             qf_lr=3E-4,
-            vf_lr=3E-4,
         ),
         net_size=128,
     )

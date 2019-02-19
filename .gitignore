@@ -3,6 +3,6 @@
 **/*.pyc
 **/*.swp
 rlkit/launchers/config.py
-*.mp4
+**.mp4
 *.ipynb
 *.png

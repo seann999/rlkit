@@ -6,7 +6,7 @@ Algorithm-specific networks should go else-where.
 import torch
 from torch import nn as nn
 from torch.nn import functional as F
-from torch.nn.parallel import parallel_apply
+from torch.nn.parallel import parallel_apply, gather
 from rlkit.policies.base import Policy
 from rlkit.torch import pytorch_util as ptu
 from rlkit.torch.core import PyTorchModule
@@ -115,8 +115,8 @@ class SplitMlp(PyTorchModule):
         for i, next_size in enumerate(hidden_sizes):
             fc = nn.Conv1d(in_size * heads, next_size * heads, 1, groups=heads)
             in_size = next_size
-            hidden_init(fc.weight)
-            fc.bias.data.fill_(0)
+            #hidden_init(fc.weight)
+            #fc.bias.data.fill_(0)
             self.__setattr__("fc{}".format(i), fc)
             self.convs.append(fc)
 
@@ -126,8 +126,8 @@ class SplitMlp(PyTorchModule):
                 self.layer_norms.append(ln)
 
         self.last_conv = nn.Conv1d(in_size * heads, output_size * heads, 1, groups=heads)
-        hidden_init(self.last_conv.weight)
-        self.last_conv.bias.data.fill_(b_init_value)
+        #hidden_init(self.last_conv.weight)
+        #self.last_conv.bias.data.fill_(b_init_value)
         #self.last_fc.weight.data.uniform_(-init_w, init_w)
         #self.last_fc.bias.data.uniform_(-init_w, init_w)
 
@@ -152,32 +152,36 @@ class SplitMlp(PyTorchModule):
         else:
             return output
 
-# class EnsembleFlattenMlp(PyTorchModule):
-#     def __init__(self, n_nets, **kwargs):
-#         self.save_init_params(locals())
-#         super().__init__()
-#         self.nets = []
+class EnsembleFlattenMlp(PyTorchModule):
+    def __init__(self, n_nets, **kwargs):
+        self.save_init_params(locals())
+        super().__init__()
+        self.nets = []
 
-#         for i in range(n_nets):
-#             mlp = Mlp(**kwargs)
-#             self.nets.append(mlp)
-#             self.add_module('mlp_' + str(i), mlp)
+        for i in range(n_nets):
+            mlp = Mlp(**kwargs)
+            self.nets.append(mlp)
+            self.add_module('mlp_' + str(i), mlp)
 
-#     def forward(self, inputs, **kwargs):
-#         start = time.time()
+    def forward(self, *inputs, **kwargs):
+        start = time.time()
         
-#         outputs = parallel_apply(self.nets, [torch.cat(tup, dim=1) for tup in inputs], devices=[i // 4 for i in range(len(self.nets))])
-        
-#         print(time.time() - start)
-#         #outputs = []
+        if len(inputs[0]) == len(self.nets):
+            outputs = parallel_apply(self.nets, [torch.cat(tup, dim=1) for tup in inputs[0]], devices=[i // 4 for i in range(len(self.nets))])
+        else:
+            outputs = parallel_apply(self.nets, [torch.cat(inputs, dim=1) for _ in range(len(self.nets))], devices=[i // 4 for i in range(len(self.nets))])
+        #outputs = []
 
-#         #for net in self.nets:
-#         #out = net.forward(flat_inputs, **kwargs)
-#         #outputs.append(out)
+        #for net in self.nets:
+        #out = net.forward(flat_inputs, **kwargs)
+        #outputs.append(out)
 
-#         flat_outputs = torch.cat(outputs, dim=1)
+        #flat_outputs = torch.cat(outputs, dim=1)
+        print(time.time() - start)
 
-#         return flat_outputs
+        flat_outputs = gather(outputs, 0, 1)
+
+        return flat_outputs
     
 class SplitFlattenMlp(SplitMlp):
     """

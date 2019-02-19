@@ -16,14 +16,14 @@ from gym.envs.classic_control import Continuous_MountainCarEnv
 import rlkit.torch.pytorch_util as ptu
 from rlkit.envs.wrappers import NormalizedBoxEnv
 from rlkit.launchers.launcher_util import setup_logger
-from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy, MultiTanhGaussianPolicy
+from rlkit.torch.sac.policies import TanhGaussianPolicy, GMMPolicy, MultiTanhGaussianPolicy, SplitMultiTanhGaussianPolicy
 from rlkit.torch.sac.thompsac import ThompsonSoftActorCritic
 from rlkit.torch.sac.diayn import DIAYN
-from rlkit.torch.networks import SplitFlattenMlp
+from rlkit.torch.networks import FlattenMlp, SplitFlattenMlp, EnsembleFlattenMlp
 
-#from create_maze_env import create_maze_env
+from custom_env import create_swingup
 from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
-from box2d.cartpole_swingup_sparse_env import CartpoleSwingupSparseEnv
+#from box2d.cartpole_swingup_sparse_env import CartpoleSwingupSparseEnv
 
 from diayn import DIAYNWrappedEnv
 
@@ -32,10 +32,14 @@ import torch.nn as nn
 import argparse
 parser     = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=0)
+parser.add_argument('--heads', type=int, default=10)
 parser.add_argument('--drop', type=float, default=0.5)
 parser.add_argument('--prior', type=float, default=10)
 parser.add_argument('--prior-offset', type=float, default=0)
 parser.add_argument('--dir', type=str, default="test")
+parser.add_argument('--ensemble', action='store_true')
+parser.add_argument('--split-actor', action='store_true')
+parser.add_argument('--split-critic', action='store_true')
 args = parser.parse_args()
 
 import torch
@@ -43,7 +47,7 @@ torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = True
 
 def experiment(variant):
-    env = NormalizedBoxEnv(CartpoleSwingupSparseEnv())
+    env = NormalizedBoxEnv(create_swingup())
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
     #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))
@@ -54,45 +58,62 @@ def experiment(variant):
     skill_dim = 0#50
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
-    heads = 10
+    heads = args.heads
 
     net_size = variant['net_size']
-    qf1 = SplitFlattenMlp(
-        hidden_sizes=[net_size, net_size],
-        input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
-        heads=heads,
-    )
-    qf2 = SplitFlattenMlp(
-        hidden_sizes=[net_size, net_size],
-        input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
-        heads=heads,
-    )
-    pqf1 = SplitFlattenMlp(
-        hidden_sizes=[net_size, net_size],
-        input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
-        heads=heads,
-    )
-    pqf2 = SplitFlattenMlp(
-        hidden_sizes=[net_size, net_size],
-        input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
-        heads=heads,
-    )
-    vf = SplitFlattenMlp(
-        hidden_sizes=[net_size, net_size],
-        input_size=obs_dim + skill_dim,
-        output_size=1,
-        heads=heads,
-    )
-    policy = MultiTanhGaussianPolicy(
-        hidden_sizes=[net_size, net_size],
-        obs_dim=obs_dim + skill_dim,
-        action_dim=action_dim,
-        heads=heads,
-    )
+    
+    if args.ensemble:
+        print("using ensemble critic")
+        
+        def create_net():
+            return EnsembleFlattenMlp(
+                heads,
+                hidden_sizes=[net_size, net_size],
+                input_size=obs_dim + skill_dim + action_dim,
+                output_size=1,
+            )
+    elif args.split_critic:
+        print("using split critic")
+        
+        def create_net():
+            return SplitFlattenMlp(
+                hidden_sizes=[net_size, net_size],
+                input_size=obs_dim + skill_dim + action_dim,
+                output_size=1,
+                heads=heads,
+            )
+    else:
+        print("using multiheaded critic")
+        
+        def create_net():
+            return FlattenMlp(
+                hidden_sizes=[net_size, net_size],
+                input_size=obs_dim + skill_dim + action_dim,
+                output_size=heads,
+            )
+    
+    qf1 = create_net()
+    qf2 = create_net()
+    pqf1 = create_net()
+    pqf2 = create_net()
+    vf = create_net()
+    
+    if args.split_actor:
+        print("using split actor")
+        policy = SplitMultiTanhGaussianPolicy(
+            hidden_sizes=[net_size, net_size],
+            obs_dim=obs_dim + skill_dim,
+            action_dim=action_dim,
+            heads=heads,
+        )
+    else:
+        print("using multiheaded actor")
+        policy = MultiTanhGaussianPolicy(
+            hidden_sizes=[net_size, net_size],
+            obs_dim=obs_dim + skill_dim,
+            action_dim=action_dim,
+            heads=heads,
+        )
     algorithm = ThompsonSoftActorCritic(
         env=env,
         policy=policy,

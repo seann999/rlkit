@@ -17,7 +17,7 @@ def create_swingup():
         if np.cos(env.pole.angle) > 0.95 and abs(env.cart.position[0]) < 3 and abs(env.cart.linearVelocity[0]) < 1 and abs(env.pole.angularVelocity) < 1:
             yield 1
         else:
-            yield -0.01 * np.linalg.norm(action)
+            yield -0.1 * np.linalg.norm(action)
     
     env.log_diagnostics = log
     env.compute_reward = compute_reward

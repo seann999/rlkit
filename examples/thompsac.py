@@ -8,10 +8,10 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 
 import numpy as np
-from gym.envs.mujoco import HalfCheetahEnv
-from gym.envs.mujoco import HumanoidEnv, InvertedPendulumEnv, ReacherEnv, HumanoidStandupEnv
-from gym.envs.mujoco import HopperEnv
-from gym.envs.classic_control import Continuous_MountainCarEnv
+#from gym.envs.mujoco import HalfCheetahEnv
+#from gym.envs.mujoco import HumanoidEnv, InvertedPendulumEnv, ReacherEnv, HumanoidStandupEnv
+#from gym.envs.mujoco import HopperEnv
+#from gym.envs.classic_control import Continuous_MountainCarEnv
 
 import rlkit.torch.pytorch_util as ptu
 from rlkit.envs.wrappers import NormalizedBoxEnv
@@ -22,7 +22,7 @@ from rlkit.torch.sac.diayn import DIAYN
 from rlkit.torch.networks import FlattenMlp, SplitFlattenMlp, EnsembleFlattenMlp
 
 from custom_env import create_swingup
-from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
+#from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
 #from box2d.cartpole_swingup_sparse_env import CartpoleSwingupSparseEnv
 
 from diayn import DIAYNWrappedEnv
@@ -33,6 +33,7 @@ import argparse
 parser     = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--heads', type=int, default=10)
+parser.add_argument('--prior-size', type=int, default=128)
 parser.add_argument('--drop', type=float, default=0.5)
 parser.add_argument('--prior', type=float, default=10)
 parser.add_argument('--prior-offset', type=float, default=0)
@@ -59,13 +60,11 @@ def experiment(variant):
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
     heads = args.heads
-
-    net_size = variant['net_size']
     
     if args.ensemble:
         print("using ensemble critic")
         
-        def create_net():
+        def create_net(net_size):
             return EnsembleFlattenMlp(
                 heads,
                 hidden_sizes=[net_size, net_size],
@@ -75,7 +74,7 @@ def experiment(variant):
     elif args.split_critic:
         print("using split critic")
         
-        def create_net():
+        def create_net(net_size):
             return SplitFlattenMlp(
                 hidden_sizes=[net_size, net_size],
                 input_size=obs_dim + skill_dim + action_dim,
@@ -85,18 +84,19 @@ def experiment(variant):
     else:
         print("using multiheaded critic")
         
-        def create_net():
+        def create_net(net_size):
             return FlattenMlp(
                 hidden_sizes=[net_size, net_size],
                 input_size=obs_dim + skill_dim + action_dim,
                 output_size=heads,
             )
     
-    qf1 = create_net()
-    qf2 = create_net()
-    pqf1 = create_net()
-    pqf2 = create_net()
-    vf = create_net()
+    qf1 = create_net(variant['net_size'])
+    qf2 = create_net(variant['net_size'])
+    pqf1 = create_net(args.prior_size)
+    pqf2 = create_net(args.prior_size)
+    
+    net_size = variant['net_size']
     
     if args.split_actor:
         print("using split actor")
@@ -125,7 +125,6 @@ def experiment(variant):
         droprate=args.drop,
         prior_offset=args.prior_offset,
         heads=heads,
-        vf=vf,
         #disc=disc,
         #skill_dim=skill_dim,
         **variant['algo_params']
@@ -138,7 +137,7 @@ if __name__ == "__main__":
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(
-            num_epochs=300,
+            num_epochs=500,
             num_steps_per_epoch=1000,
             num_steps_per_eval=1000,
             batch_size=128,
@@ -153,7 +152,6 @@ if __name__ == "__main__":
             soft_target_tau=0.005,
             policy_lr=3E-4,
             qf_lr=3E-4,
-            vf_lr=3E-4,
         ),
         net_size=128,
     )

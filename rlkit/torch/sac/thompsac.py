@@ -24,11 +24,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             qf2,
             pqf1,
             pqf2,
-            vf,
 
             policy_lr=1e-3,
             qf_lr=1e-3,
-            vf_lr=1e-3,
             droprate=0.5,
             prior_coef=1,
             prior_offset=0,
@@ -76,7 +74,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.pqf1 = pqf1
         self.pqf2 = pqf2
         self.droprate = droprate
-        self.vf = vf
         self.train_policy_with_reparameterization = (
             train_policy_with_reparameterization
         )
@@ -101,11 +98,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             
         self.prior_offset = prior_offset
 
-        self.target_vf = vf.copy()
         self.target_qf1 = qf1.copy()
         self.target_qf2 = qf2.copy()
         self.qf_criterion = nn.MSELoss()
-        self.vf_criterion = nn.MSELoss()
 
         self.policy_optimizer = optimizer_class(
             policy.parameters(),
@@ -118,10 +113,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.qf2_optimizer = optimizer_class(
             self.qf2.parameters(),
             lr=qf_lr,
-        )
-        self.vf_optimizer = optimizer_class(
-            self.vf.parameters(),
-            lr=vf_lr,
         )
 
     def _do_training(self):

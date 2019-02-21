@@ -11,7 +11,7 @@ If you're going to rename this directory and use EC2, then change
 `doodad.mount.MountLocal.filter_dir`
 """
 rlkit_dir = os.path.dirname(rlkit.__file__)
-LOCAL_LOG_DIR = join(rlkit_dir, os.pardir, 'data')
+LOCAL_LOG_DIR = join(rlkit_dir, os.pardir, 'results')
 
 """
 ********************************************************************************

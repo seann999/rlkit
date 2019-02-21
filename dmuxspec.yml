@@ -29,6 +29,9 @@ features:
 - pip:gtimer==1.0.0b5
 - pip:pygame==1.9.2
 - apt:swig
+- apt:libglfw3-dev
+- pip:glfw==1.7.1
+- pip:jsonmerge==1.5.2
 - custom:pybox2d
 custom_defs:
   pybox2d:
@@ -41,4 +44,4 @@ hardware:
 - cpu==2
 - ram==4096
 - disk==1000
-- gpu==8
+- gpu==1

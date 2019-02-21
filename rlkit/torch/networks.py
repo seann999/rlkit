@@ -115,8 +115,8 @@ class SplitMlp(PyTorchModule):
         for i, next_size in enumerate(hidden_sizes):
             fc = nn.Conv1d(in_size * heads, next_size * heads, 1, groups=heads)
             in_size = next_size
-            #hidden_init(fc.weight)
-            #fc.bias.data.fill_(0)
+            hidden_init(fc.weight)
+            fc.bias.data.fill_(0)
             self.__setattr__("fc{}".format(i), fc)
             self.convs.append(fc)
 
@@ -126,8 +126,8 @@ class SplitMlp(PyTorchModule):
                 self.layer_norms.append(ln)
 
         self.last_conv = nn.Conv1d(in_size * heads, output_size * heads, 1, groups=heads)
-        #hidden_init(self.last_conv.weight)
-        #self.last_conv.bias.data.fill_(b_init_value)
+        hidden_init(self.last_conv.weight)
+        self.last_conv.bias.data.fill_(b_init_value)
         #self.last_fc.weight.data.uniform_(-init_w, init_w)
         #self.last_fc.bias.data.uniform_(-init_w, init_w)
 

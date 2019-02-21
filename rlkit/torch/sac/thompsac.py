@@ -124,7 +124,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         actions = batch['actions']
         next_obs = batch['next_observations'][:, :-self.heads]
 
-        q1_pred = self.qf1(obs, actions) + self.prior_coef * self.pqf1(obs, actions) + self.prior_offset
+        q1_pred = self.qf1(obs, actions) + self.pqf1(obs, actions) * self.prior_coef + self.prior_offset
         q2_pred = self.qf2(obs, actions) + self.prior_coef * self.pqf2(obs, actions) + self.prior_offset
         
         qf1_loss, qf2_loss = 0, 0

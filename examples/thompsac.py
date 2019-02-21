@@ -13,6 +13,7 @@ import numpy as np
 #from gym.envs.mujoco import HopperEnv
 #from gym.envs.classic_control import Continuous_MountainCarEnv
 
+import torch
 import rlkit.torch.pytorch_util as ptu
 from rlkit.envs.wrappers import NormalizedBoxEnv
 from rlkit.launchers.launcher_util import setup_logger
@@ -42,6 +43,7 @@ parser.add_argument('--dir', type=str, default="test")
 parser.add_argument('--ensemble', action='store_true')
 parser.add_argument('--split-actor', action='store_true')
 parser.add_argument('--split-critic', action='store_true')
+parser.add_argument('--range-prior', action='store_true')
 args = parser.parse_args()
 
 import torch
@@ -115,6 +117,12 @@ def experiment(variant):
             action_dim=action_dim,
             heads=heads,
         )
+    
+    if args.range_prior:
+        coefs = [0, 0.01, 0.03, 0.1, 0.3, 1, 2, 4, 8, 16, 32, 64]
+        prior = np.array(coefs[:heads], dtype=np.float32)
+        prior = torch.FloatTensor(prior).cuda()
+    
     algorithm = ThompsonSoftActorCritic(
         env=env,
         policy=policy,
@@ -122,7 +130,7 @@ def experiment(variant):
         qf2=qf2,
         pqf1=pqf1,
         pqf2=pqf2,
-        prior_coef=args.prior,
+        prior_coef=prior,
         droprate=args.drop,
         prior_offset=args.prior_offset,
         heads=heads,

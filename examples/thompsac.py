@@ -36,6 +36,7 @@ parser.add_argument('--heads', type=int, default=10)
 parser.add_argument('--prior-size', type=int, default=128)
 parser.add_argument('--drop', type=float, default=0.5)
 parser.add_argument('--prior', type=float, default=10)
+parser.add_argument('--force', type=float, default=1)
 parser.add_argument('--prior-offset', type=float, default=0)
 parser.add_argument('--dir', type=str, default="test")
 parser.add_argument('--ensemble', action='store_true')
@@ -48,7 +49,7 @@ torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = True
 
 def experiment(variant):
-    env = NormalizedBoxEnv(create_swingup())
+    env = NormalizedBoxEnv(create_swingup(args.force))
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
     #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))

@@ -1,8 +1,14 @@
 from garage.envs.box2d.cartpole_swingup_env import CartpoleSwingupEnv
 import numpy as np
 
-def create_swingup():
+def create_swingup(force=0.5):
     env = CartpoleSwingupEnv()
+    
+    def new_step(fn):
+        def step(action):
+            return fn(action * force)
+        
+        return step
     
     def log(path, **kwargs):
         #env.log_diagnostics(path)
@@ -22,5 +28,6 @@ def create_swingup():
     env.log_diagnostics = log
     env.compute_reward = compute_reward
     env.is_current_done = is_current_done
+    env.step = new_step(env.step)
     
     return env

@@ -10,13 +10,14 @@ from box2d.parser import find_body
 # nonlinear identification and control." Proc. of the IFAC Workshop on
 # Nonlinear Model Predictive Control for Fast Systems, NMPC FS06. 2006.
 class CartpoleSwingupEnv(Box2DEnv, Serializable):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, force=1, *args, **kwargs):
         super().__init__(self.model_path("cartpole.xml.mako"), *args, **kwargs)
 
         self.max_cart_pos = 3
         self.max_reward_cart_pos = 3
         self.cart = find_body(self.world, "cart")
         self.pole = find_body(self.world, "pole")
+        self.force = force
 
         # Always call Serializable constructor last
         Serializable.quick_init(self, locals())

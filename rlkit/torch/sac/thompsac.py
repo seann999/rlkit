@@ -338,6 +338,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         
         if self.render:
             self.training_env.render()
+
         next_ob, raw_reward, terminal, env_info = (
             self.training_env.step(action)
         )

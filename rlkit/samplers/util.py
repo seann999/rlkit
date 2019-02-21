@@ -54,7 +54,10 @@ def rollout(env, agent, max_path_length=np.inf, animated=False):
         img = pygame.surfarray.array2d(env.viewer.screen)
         images.append(img)
     while path_length < max_path_length:
-        a, agent_info = agent.get_action(o)
+        try:
+            a, agent_info = agent.get_action(o)
+        except:
+            a, agent_info = agent.get_action(o, 0)
         next_o, r, d, env_info = env.step(a)
         observations.append(o)
         rewards.append(r)

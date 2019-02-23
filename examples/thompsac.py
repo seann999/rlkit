@@ -46,12 +46,15 @@ parser.add_argument('--split-critic', action='store_true')
 parser.add_argument('--range-prior', action='store_true')
 args = parser.parse_args()
 
+#from line import LineEnv
+
 import torch
 torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = True
 
 def experiment(variant):
     env = NormalizedBoxEnv(create_swingup(args.force))
+    #env = NormalizedBoxEnv(LineEnv())
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
     #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))
@@ -122,6 +125,8 @@ def experiment(variant):
         coefs = [0, 0.01, 0.03, 0.1, 0.3, 1, 2, 4, 8, 16, 32, 64]
         prior = np.array(coefs[:heads], dtype=np.float32)
         prior = torch.FloatTensor(prior).cuda()
+    else:
+        prior = args.prior
     
     algorithm = ThompsonSoftActorCritic(
         env=env,
@@ -146,7 +151,7 @@ if __name__ == "__main__":
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(
-            num_epochs=500,
+            num_epochs=10000,
             num_steps_per_epoch=1000,
             num_steps_per_eval=1000,
             batch_size=128,

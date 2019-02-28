@@ -24,6 +24,7 @@ from rlkit.torch.sac.diayn import DIAYN
 from rlkit.torch.networks import FlattenMlp, SplitFlattenMlp, EnsembleFlattenMlp
 
 from custom_env import create_swingup
+import pickle
 #from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
 #from box2d.cartpole_swingup_sparse_env import CartpoleSwingupSparseEnv
 
@@ -50,6 +51,7 @@ parser.add_argument('--split-actor', action='store_true')
 parser.add_argument('--split-critic', action='store_true')
 parser.add_argument('--range-prior', action='store_true')
 
+parser.add_argument('--load-prior', type=str, default=None)
 parser.add_argument('--lr', type=float, default=3e-4)
 parser.add_argument('--tau', type=float, default=0.001)
 parser.add_argument('--activation', type=str, default="elu")
@@ -124,6 +126,13 @@ def experiment(variant):
     pqf1 = create_net(args.prior_size)
     pqf2 = create_net(args.prior_size)
     
+    if args.load_prior:
+        print("loading prior", args.load_prior)
+        data = pickle.load(open(args.load_prior, "rb"))
+        pqf1 = data['qf1']
+        pqf2 = data['qf2']
+        print(pqf1)
+    
     net_size = variant['net_size']
     
     if args.split_actor:
@@ -172,14 +181,26 @@ def experiment(variant):
 
 
 if __name__ == "__main__": 
+    
+     if args.env == "line":
+        maxpath = 110
+        evalsteps = 1000
+        epochsteps = 200
+        numepochs = 500
+    elif args.env == "swingup":
+        maxpath = 1000
+        evalsteps = 1000
+        epochsteps = 1000
+        numepochs = 500
+        
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(
-            num_epochs=500,
-            num_steps_per_epoch=200,
-            num_steps_per_eval=1000,
+            num_epochs=numepochs,
+            num_steps_per_epoch=epochsteps,
+            num_steps_per_eval=evalsteps,
             batch_size=128,
-            max_path_length=110,
+            max_path_length=maxpath,
             discount=0.99,
             reward_scale=args.reward_scale,
             alpha=args.alpha,

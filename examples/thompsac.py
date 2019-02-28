@@ -182,7 +182,7 @@ def experiment(variant):
 
 if __name__ == "__main__": 
     
-     if args.env == "line":
+    if args.env == "line":
         maxpath = 110
         evalsteps = 1000
         epochsteps = 200

@@ -13,6 +13,7 @@ import numpy as np
 #from gym.envs.mujoco import HopperEnv
 #from gym.envs.classic_control import Continuous_MountainCarEnv
 
+from torch.nn import functional as F
 import torch
 import rlkit.torch.pytorch_util as ptu
 from rlkit.envs.wrappers import NormalizedBoxEnv
@@ -46,6 +47,10 @@ parser.add_argument('--ensemble', action='store_true')
 parser.add_argument('--split-actor', action='store_true')
 parser.add_argument('--split-critic', action='store_true')
 parser.add_argument('--range-prior', action='store_true')
+
+parser.add_argument('--lr', type=float, default=3e-4)
+parser.add_argument('--tau', type=float, default=0.005)
+parser.add_argument('--activation', type=str, default="selu")
 args = parser.parse_args()
 
 from line import LineEnv
@@ -68,6 +73,15 @@ def experiment(variant):
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
     heads = args.heads
+    
+    if args.activation == "selu":
+        hidden_act = F.selu
+    elif args.activation == "relu":
+        hidden_act = F.relu
+    elif args.activation == "elu":
+        hidden_act = F.elu
+    elif args.activation == "tanh":
+        hidden_act = F.tanh
     
     if args.ensemble:
         print("using ensemble critic")
@@ -97,6 +111,7 @@ def experiment(variant):
                 hidden_sizes=[net_size, net_size],
                 input_size=obs_dim + skill_dim + action_dim,
                 output_size=heads,
+                hidden_activation=hidden_act,
             )
     
     qf1 = create_net(variant['net_size'])
@@ -113,6 +128,7 @@ def experiment(variant):
             obs_dim=obs_dim + skill_dim,
             action_dim=action_dim,
             heads=heads,
+            hidden_activation=hidden_act,
         )
     else:
         print("using multiheaded actor")
@@ -121,6 +137,7 @@ def experiment(variant):
             obs_dim=obs_dim + skill_dim,
             action_dim=action_dim,
             heads=heads,
+            hidden_activation=hidden_act,
         )
     
     if args.range_prior:
@@ -166,9 +183,9 @@ if __name__ == "__main__":
             min_num_steps_before_training=1000,
             replay_buffer_size=int(1e6),
 
-            soft_target_tau=0.005,
-            policy_lr=3E-4,
-            qf_lr=3E-4,
+            soft_target_tau=args.tau,
+            policy_lr=args.lr,
+            qf_lr=args.lr,
         ),
         net_size=128,
     )

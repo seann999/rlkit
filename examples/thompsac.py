@@ -35,6 +35,7 @@ import argparse
 parser     = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--heads', type=int, default=10)
+parser.add_argument('--net-size', type=int, default=128)
 parser.add_argument('--prior-size', type=int, default=128)
 parser.add_argument('--drop', type=float, default=0.5)
 parser.add_argument('--prior', type=float, default=10)
@@ -49,8 +50,8 @@ parser.add_argument('--split-critic', action='store_true')
 parser.add_argument('--range-prior', action='store_true')
 
 parser.add_argument('--lr', type=float, default=3e-4)
-parser.add_argument('--tau', type=float, default=0.005)
-parser.add_argument('--activation', type=str, default="selu")
+parser.add_argument('--tau', type=float, default=0.001)
+parser.add_argument('--activation', type=str, default="elu")
 args = parser.parse_args()
 
 from line import LineEnv
@@ -187,7 +188,7 @@ if __name__ == "__main__":
             policy_lr=args.lr,
             qf_lr=args.lr,
         ),
-        net_size=128,
+        net_size=args.net_size,
     )
     setup_logger(args.dir, variant=variant)
     experiment(variant)

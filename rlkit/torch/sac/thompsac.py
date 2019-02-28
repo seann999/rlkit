@@ -350,104 +350,106 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 ax2 = ax1.twinx()
                 
                 graph_x = np.arange(-50, 100)
-                x = np.array([self.training_env.preprocess(xx) for xx in graph_x])
-                obs = torch.from_numpy(x).float().cuda()# / 100
-                acts = torch.from_numpy(np.ones((150, 1))).float().cuda()
-                acts2 = torch.from_numpy(np.ones((150, 1))*-1).float().cuda()
-                p1 = self.prior_coef * self.pqf1(obs, acts)
-                p2 = self.prior_coef * self.pqf2(obs, acts)
-                qf11 = self.qf1(obs, acts)
-                qf21 = self.qf2(obs, acts)
-                
-                q, qi1 = torch.min(torch.stack([qf11+p1, qf21+p2], 2), 2)
+                try:
+                    x = np.array([self.training_env.preprocess(xx) for xx in graph_x])
+                    obs = torch.from_numpy(x).float().cuda()# / 100
+                    acts = torch.from_numpy(np.ones((150, 1))).float().cuda()
+                    acts2 = torch.from_numpy(np.ones((150, 1))*-1).float().cuda()
+                    p1 = self.prior_coef * self.pqf1(obs, acts)
+                    p2 = self.prior_coef * self.pqf2(obs, acts)
+                    qf11 = self.qf1(obs, acts)
+                    qf21 = self.qf2(obs, acts)
 
-                p3 = self.prior_coef * self.pqf1(obs, acts2)
-                p4 = self.prior_coef * self.pqf2(obs, acts2)
-                qf12 = self.qf1(obs, acts2)
-                qf22 = self.qf2(obs, acts2)
-                q2, qi2 = torch.min(torch.stack([qf12+p3, qf22+p4], 2), 2)
-                
-                #p = torch.stack([p1, p2], 2).view(-1, 2)
-                #p = p[np.arange(p.shape[0]), qi1.flatten()].view(-1, self.heads)
-                #p2 = torch.stack([p3, p4], 2).view(-1, 2)
-                #p2 = p2[np.arange(p2.shape[0]), qi2.flatten()].view(-1, self.heads)
+                    q, qi1 = torch.min(torch.stack([qf11+p1, qf21+p2], 2), 2)
 
-                q = q.cpu().detach().numpy()
-                q2 = q2.cpu().detach().numpy()
-                
-                ax1.plot(graph_x, p1.cpu().detach().numpy(), c="red", ls="-.", lw=1)
-                ax1.plot(graph_x, p2.cpu().detach().numpy(), c="red", ls="-.", lw=1)
-                ax1.plot(graph_x, p3.cpu().detach().numpy(), c="red", ls=":", lw=1)
-                ax1.plot(graph_x, p4.cpu().detach().numpy(), c="red", ls=":", lw=1)
+                    p3 = self.prior_coef * self.pqf1(obs, acts2)
+                    p4 = self.prior_coef * self.pqf2(obs, acts2)
+                    qf12 = self.qf1(obs, acts2)
+                    qf22 = self.qf2(obs, acts2)
+                    q2, qi2 = torch.min(torch.stack([qf12+p3, qf22+p4], 2), 2)
 
-                for i in range(self.heads):
-                    ax1.plot(graph_x, q[:, i], c=plt.rcParams['axes.color_cycle'][i], lw=3)
-                    ax1.plot(graph_x, q2[:, i], ls="--", c=plt.rcParams['axes.color_cycle'][i], lw=3)
-                    
-                ax1.set_ylim(min(q.min(), q2.min()), max(q.max(), q2.max()))
-                    
-                if len(self.targets) > 0:
-                    self.targets = np.vstack(self.targets)
-                    axes[1].axhline(0, color='black')
-                    axes[1].axvline(0, color='black')
-                    
+                    #p = torch.stack([p1, p2], 2).view(-1, 2)
+                    #p = p[np.arange(p.shape[0]), qi1.flatten()].view(-1, self.heads)
+                    #p2 = torch.stack([p3, p4], 2).view(-1, 2)
+                    #p2 = p2[np.arange(p2.shape[0]), qi2.flatten()].view(-1, self.heads)
+
+                    q = q.cpu().detach().numpy()
+                    q2 = q2.cpu().detach().numpy()
+
+                    ax1.plot(graph_x, p1.cpu().detach().numpy(), c="red", ls="-.", lw=1)
+                    ax1.plot(graph_x, p2.cpu().detach().numpy(), c="red", ls="-.", lw=1)
+                    ax1.plot(graph_x, p3.cpu().detach().numpy(), c="red", ls=":", lw=1)
+                    ax1.plot(graph_x, p4.cpu().detach().numpy(), c="red", ls=":", lw=1)
+
                     for i in range(self.heads):
-                        for k in range(self.heads):
-                            # obs target(H) mask(H) entropybonus(H) policy(1)
-                            m = np.all([self.targets[:, -1] == i, self.targets[:, x.shape[1]+self.heads+k] == 1], 0)
-                            axes[1].scatter(self.targets[m, :x.shape[1]].sum(1)*100, self.targets[m, x.shape[1]+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
-                                           edgecolors=plt.rcParams['axes.color_cycle'][k])
-                            axes[1].scatter(self.targets[m, :x.shape[1]].sum(1)*100, self.targets[m, x.shape[1]+self.heads*2+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
-                                           edgecolors=plt.rcParams['axes.color_cycle'][k], marker="x")
-                        
-                ymin, ymax = axes[0].get_ylim()
-                axes[1].set_ylim(ymin, ymax)
-                xmin, xmax = axes[0].get_xlim()
-                axes[1].set_xlim(xmin, xmax)
+                        ax1.plot(graph_x, q[:, i], c=plt.rcParams['axes.color_cycle'][i], lw=3)
+                        ax1.plot(graph_x, q2[:, i], ls="--", c=plt.rcParams['axes.color_cycle'][i], lw=3)
 
-                #ax1.plot([0, 100], [R, R], ls="--")
-                
-                #ax2.semilogy(range(100), self.counts)
-                ax2.axvline(0, color='black')
-                
-                policy_outputs = self.policy(
-                    obs,
-                    reparameterize=self.train_policy_with_reparameterization,
-                    return_log_prob=False,
-                )
-                next_new_actions, policy_mean, policy_log_std, next_log_pi = policy_outputs[:4]
-                pt_mean = F.tanh(policy_mean)
-                
-                policy_std = policy_log_std.exp()
-                policy_low = F.tanh(policy_mean - policy_std).detach().cpu().numpy()[..., 0]
-                policy_high = F.tanh(policy_mean + policy_std).detach().cpu().numpy()[..., 0]
-                
-                policy_mean = pt_mean.detach().cpu().numpy()
-                
-                axes[2].set_ylim(-1.1, 1.1)
-                
-                mean = policy_mean[:, :, 0]
-                std = policy_std[:, :, 0]
-                
-                axes[2].axhline(0, color='black')
-                axes[2].axvline(0, color='black')
-                
-                for i in range(self.heads):
-                    axes[2].fill_between(graph_x, policy_low[:, i], policy_high[:, i], color=plt.rcParams['axes.color_cycle'][i] + "20")
-                    left = q[:, i] > q2[:, i]
-                    axes[2].scatter(graph_x[left], mean[left, i], color=plt.rcParams['axes.color_cycle'][i], marker="+")
-                    
-                p = axes[2].plot(graph_x, mean)
-                
-                
-                # for i in range(self.heads):
-                #     maxact = q[:, i].argmax()
-                #     axes[1].scatter(x[maxact], mean[maxact, i])
-                
-                plt.tight_layout()
-                path = "{}/Q-{:04d}.png".format(logger._snapshot_dir, epoch)
-                print(path)
-                plt.savefig(path)
+                    ax1.set_ylim(min(q.min(), q2.min()), max(q.max(), q2.max()))
+
+                    if len(self.targets) > 0:
+                        self.targets = np.vstack(self.targets)
+                        axes[1].axhline(0, color='black')
+                        axes[1].axvline(0, color='black')
+
+                        for i in range(self.heads):
+                            for k in range(self.heads):
+                                # obs target(H) mask(H) entropybonus(H) policy(1)
+                                m = np.all([self.targets[:, -1] == i, self.targets[:, x.shape[1]+self.heads+k] == 1], 0)
+                                axes[1].scatter(self.targets[m, :x.shape[1]].sum(1)*100, self.targets[m, x.shape[1]+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
+                                               edgecolors=plt.rcParams['axes.color_cycle'][k])
+                                axes[1].scatter(self.targets[m, :x.shape[1]].sum(1)*100, self.targets[m, x.shape[1]+self.heads*2+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
+                                               edgecolors=plt.rcParams['axes.color_cycle'][k], marker="x")
+
+                    ymin, ymax = axes[0].get_ylim()
+                    axes[1].set_ylim(ymin, ymax)
+                    xmin, xmax = axes[0].get_xlim()
+                    axes[1].set_xlim(xmin, xmax)
+
+                    #ax1.plot([0, 100], [R, R], ls="--")
+
+                    #ax2.semilogy(range(100), self.counts)
+                    ax2.axvline(0, color='black')
+
+                    policy_outputs = self.policy(
+                        obs,
+                        reparameterize=self.train_policy_with_reparameterization,
+                        return_log_prob=False,
+                    )
+                    next_new_actions, policy_mean, policy_log_std, next_log_pi = policy_outputs[:4]
+                    pt_mean = F.tanh(policy_mean)
+
+                    policy_std = policy_log_std.exp()
+                    policy_low = F.tanh(policy_mean - policy_std).detach().cpu().numpy()[..., 0]
+                    policy_high = F.tanh(policy_mean + policy_std).detach().cpu().numpy()[..., 0]
+
+                    policy_mean = pt_mean.detach().cpu().numpy()
+
+                    axes[2].set_ylim(-1.1, 1.1)
+
+                    mean = policy_mean[:, :, 0]
+                    std = policy_std[:, :, 0]
+
+                    axes[2].axhline(0, color='black')
+                    axes[2].axvline(0, color='black')
+
+                    for i in range(self.heads):
+                        axes[2].fill_between(graph_x, policy_low[:, i], policy_high[:, i], color=plt.rcParams['axes.color_cycle'][i] + "20")
+                        left = q[:, i] > q2[:, i]
+                        axes[2].scatter(graph_x[left], mean[left, i], color=plt.rcParams['axes.color_cycle'][i], marker="+")
+
+                    p = axes[2].plot(graph_x, mean)
+
+
+                    # for i in range(self.heads):
+                    #     maxact = q[:, i].argmax()
+                    #     axes[1].scatter(x[maxact], mean[maxact, i])
+
+                    plt.tight_layout()
+                    path = "{}/Q-{:04d}.png".format(logger._snapshot_dir, epoch)
+                    plt.savefig(path)
+                except:
+                    pass
             
             self._end_epoch(epoch)
                 

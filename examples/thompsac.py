@@ -35,8 +35,8 @@ import argparse
 parser     = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--heads', type=int, default=10)
-parser.add_argument('--net-size', type=int, default=128)
-parser.add_argument('--prior-size', type=int, default=128)
+parser.add_argument('--net-size', type=int, default=256)
+parser.add_argument('--prior-size', type=int, default=256)
 parser.add_argument('--drop', type=float, default=0.5)
 parser.add_argument('--prior', type=float, default=10)
 parser.add_argument('--force', type=float, default=1)
@@ -44,6 +44,7 @@ parser.add_argument('--reward-scale', type=float, default=1)
 parser.add_argument('--alpha', type=float, default=1)
 parser.add_argument('--prior-offset', type=float, default=0)
 parser.add_argument('--dir', type=str, default="test")
+parser.add_argument('--env', type=str, default="line")
 parser.add_argument('--ensemble', action='store_true')
 parser.add_argument('--split-actor', action='store_true')
 parser.add_argument('--split-critic', action='store_true')
@@ -61,8 +62,11 @@ torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = True
 
 def experiment(variant):
-    #env = NormalizedBoxEnv(create_swingup(args.force))
-    env = NormalizedBoxEnv(LineEnv())
+    if args.env == "line":
+        env = NormalizedBoxEnv(LineEnv())
+    elif args.env == "swingup":
+        env = NormalizedBoxEnv(create_swingup(args.force))
+
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
     #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))

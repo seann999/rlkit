@@ -38,6 +38,8 @@ parser.add_argument('--prior-size', type=int, default=128)
 parser.add_argument('--drop', type=float, default=0.5)
 parser.add_argument('--prior', type=float, default=10)
 parser.add_argument('--force', type=float, default=1)
+parser.add_argument('--reward-scale', type=float, default=1)
+parser.add_argument('--alpha', type=float, default=1)
 parser.add_argument('--prior-offset', type=float, default=0)
 parser.add_argument('--dir', type=str, default="test")
 parser.add_argument('--ensemble', action='store_true')
@@ -46,15 +48,15 @@ parser.add_argument('--split-critic', action='store_true')
 parser.add_argument('--range-prior', action='store_true')
 args = parser.parse_args()
 
-#from line import LineEnv
+from line import LineEnv
 
 import torch
 torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = True
 
 def experiment(variant):
-    env = NormalizedBoxEnv(create_swingup(args.force))
-    #env = NormalizedBoxEnv(LineEnv())
+    #env = NormalizedBoxEnv(create_swingup(args.force))
+    env = NormalizedBoxEnv(LineEnv())
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
     #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))
@@ -151,13 +153,14 @@ if __name__ == "__main__":
     # noinspection PyTypeChecker
     variant = dict(
         algo_params=dict(
-            num_epochs=10000,
-            num_steps_per_epoch=1000,
+            num_epochs=500,
+            num_steps_per_epoch=200,
             num_steps_per_eval=1000,
             batch_size=128,
-            max_path_length=1000,
+            max_path_length=110,
             discount=0.99,
-            reward_scale=1,
+            reward_scale=args.reward_scale,
+            alpha=args.alpha,
             use_automatic_entropy_tuning = False,
             train_policy_with_reparameterization=True,
             min_num_steps_before_training=1000,

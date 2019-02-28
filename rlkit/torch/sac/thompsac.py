@@ -3,6 +3,7 @@ from collections import OrderedDict
 import numpy as np
 import torch.optim as optim
 from torch import nn as nn
+import torch.nn.functional as F
 import gtimer as gt
 import torch
 import rlkit.torch.pytorch_util as ptu
@@ -12,6 +13,7 @@ from rlkit.torch.sac.policies import MultiMakeDeterministic
 from rlkit.data_management.path_builder import PathBuilder
 from rlkit.core.rl_algorithm import set_to_train_mode, set_to_eval_mode
 from rlkit.torch.sac.rndsac import CustomReplayBuffer, get_dim
+from rlkit.core import eval_util, logger
 
 from rlkit.torch.networks import FlattenMlp, SplitFlattenMlp, EnsembleFlattenMlp
 
@@ -35,6 +37,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             policy_std_reg_weight=1e-3,
             policy_pre_activation_weight=0.,
             optimizer_class=optim.Adam,
+            alpha=1,
 
             train_policy_with_reparameterization=True,
             soft_target_tau=1e-2,
@@ -57,7 +60,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         replay_buffer = CustomReplayBuffer(
             replay_buffer_size,
             env,
-            get_dim(env.observation_space) + self.heads
+            get_dim(env.observation_space) + self.heads + 1
         )
             
         super().__init__(
@@ -69,6 +72,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         self.current_behavior_policy = 0
         self.policy = policy
+        self.alpha = alpha
         self.qf1 = qf1
         self.qf2 = qf2
         self.pqf1 = pqf1
@@ -114,15 +118,19 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self.qf2.parameters(),
             lr=qf_lr,
         )
+        
+        self.counts = np.zeros(100)
+        self.targets = []
 
     def _do_training(self):
         batch = self.get_batch()
         rewards = batch['rewards']
         terminals = batch['terminals']
-        obs = batch['observations'][:, :-self.heads]
-        mask = batch['observations'][:, -self.heads:]
+        obs = batch['observations'][:, :-self.heads-1]
+        mask = batch['observations'][:, -self.heads-1:-1]
+        pol = batch['observations'][:, -1]
         actions = batch['actions']
-        next_obs = batch['next_observations'][:, :-self.heads]
+        next_obs = batch['next_observations'][:, :-self.heads-1]
 
         q1_pred = self.qf1(obs, actions) + self.pqf1(obs, actions) * self.prior_coef + self.prior_offset
         q2_pred = self.qf2(obs, actions) + self.prior_coef * self.pqf2(obs, actions) + self.prior_offset
@@ -149,7 +157,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self.alpha_optimizer.step()
             alpha = self.log_alpha.exp()
         else:
-            alpha = 1
+            alpha = self.alpha
             alpha_loss = 0
 
         """
@@ -187,10 +195,11 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         elif type(self.qf1) == SplitFlattenMlp or type(self.qf1) == EnsembleFlattenMlp:
             def get_q(qf1, qf2, obs, actions):
                 inp = [[obs, actions[:, i, :]] for i in range(actions.shape[1])]
+                inp2 = [[obs, actions[:, i, :]] for i in range(actions.shape[1])]
 
                 q = torch.min(
-                    self.target_qf1(inp) + self.prior_coef * self.pqf1(inp) + self.prior_offset,
-                    self.target_qf2(inp) + self.prior_coef * self.pqf2(inp) + self.prior_offset,
+                    self.target_qf1(inp) + self.prior_coef * self.pqf1(inp2) + self.prior_offset,
+                    self.target_qf2(inp) + self.prior_coef * self.pqf2(inp2) + self.prior_offset,
                 )
 
                 return q
@@ -199,11 +208,15 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         next_q_new_actions = get_q(self.target_qf1, self.target_qf2, next_obs, next_new_actions)
         
         # 128 x 10
-        target_v_values = next_q_new_actions - alpha*next_log_pi[:, torch.arange(self.heads), 0]
+        entropy_bonus = -alpha*next_log_pi[:, torch.arange(self.heads), 0]
+        target_v_values = next_q_new_actions + entropy_bonus
 
         q_target = rewards + (1. - terminals) * self.discount * target_v_values
         qf1_loss = (((q1_pred - q_target.detach())**2.0) * mask).sum(1)
         qf2_loss = (((q2_pred - q_target.detach())**2.0) * mask).sum(1)
+        self.targets.append(np.hstack([obs.detach().cpu().numpy(), q_target.detach().cpu().numpy(), mask.detach().cpu().numpy(), ((1. - terminals) * self.discount * entropy_bonus).detach().cpu().numpy(), pol.cpu().numpy()[:, None]]))
+        #qf1_loss = (F.smooth_l1_loss(q1_pred, q_target.detach(), reduce=False) * mask).sum(1)
+        #qf2_loss = (F.smooth_l1_loss(q2_pred, q_target.detach(), reduce=False) * mask).sum(1)
 
         """
         VF Loss
@@ -311,6 +324,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 range(start_epoch, self.num_epochs),
                 save_itrs=True,
         ):
+            self.targets = []
             self._start_epoch(epoch)
             set_to_train_mode(self.training_env)
             for step in range(self.num_env_steps_per_epoch):
@@ -324,6 +338,117 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             set_to_eval_mode(self.env)
             self._try_to_eval(epoch)
             gt.stamp('eval')
+            
+            if epoch % 10 == 0:
+                import matplotlib.pyplot as plt
+                
+                plt.clf()
+                fig, axes = plt.subplots(1, 3)
+                fig.set_size_inches(18, 6)
+                ax1 = axes[0]
+                #ax1.set_ylim(-1, 10)
+                ax2 = ax1.twinx()
+                
+                graph_x = np.arange(-50, 100)
+                x = np.array([self.training_env.preprocess(xx) for xx in graph_x])
+                obs = torch.from_numpy(x).float().cuda()# / 100
+                acts = torch.from_numpy(np.ones((150, 1))).float().cuda()
+                acts2 = torch.from_numpy(np.ones((150, 1))*-1).float().cuda()
+                p1 = self.prior_coef * self.pqf1(obs, acts)
+                p2 = self.prior_coef * self.pqf2(obs, acts)
+                qf11 = self.qf1(obs, acts)
+                qf21 = self.qf2(obs, acts)
+                
+                q, qi1 = torch.min(torch.stack([qf11+p1, qf21+p2], 2), 2)
+
+                p3 = self.prior_coef * self.pqf1(obs, acts2)
+                p4 = self.prior_coef * self.pqf2(obs, acts2)
+                qf12 = self.qf1(obs, acts2)
+                qf22 = self.qf2(obs, acts2)
+                q2, qi2 = torch.min(torch.stack([qf12+p3, qf22+p4], 2), 2)
+                
+                #p = torch.stack([p1, p2], 2).view(-1, 2)
+                #p = p[np.arange(p.shape[0]), qi1.flatten()].view(-1, self.heads)
+                #p2 = torch.stack([p3, p4], 2).view(-1, 2)
+                #p2 = p2[np.arange(p2.shape[0]), qi2.flatten()].view(-1, self.heads)
+
+                q = q.cpu().detach().numpy()
+                q2 = q2.cpu().detach().numpy()
+                
+                ax1.plot(graph_x, p1.cpu().detach().numpy(), c="red", ls="-.", lw=1)
+                ax1.plot(graph_x, p2.cpu().detach().numpy(), c="red", ls="-.", lw=1)
+                ax1.plot(graph_x, p3.cpu().detach().numpy(), c="red", ls=":", lw=1)
+                ax1.plot(graph_x, p4.cpu().detach().numpy(), c="red", ls=":", lw=1)
+
+                for i in range(self.heads):
+                    ax1.plot(graph_x, q[:, i], c=plt.rcParams['axes.color_cycle'][i], lw=3)
+                    ax1.plot(graph_x, q2[:, i], ls="--", c=plt.rcParams['axes.color_cycle'][i], lw=3)
+                    
+                ax1.set_ylim(min(q.min(), q2.min()), max(q.max(), q2.max()))
+                    
+                if len(self.targets) > 0:
+                    self.targets = np.vstack(self.targets)
+                    axes[1].axhline(0, color='black')
+                    axes[1].axvline(0, color='black')
+                    
+                    for i in range(self.heads):
+                        for k in range(self.heads):
+                            # obs target(H) mask(H) entropybonus(H) policy(1)
+                            m = np.all([self.targets[:, -1] == i, self.targets[:, x.shape[1]+self.heads+k] == 1], 0)
+                            axes[1].scatter(self.targets[m, :x.shape[1]].sum(1)*100, self.targets[m, x.shape[1]+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
+                                           edgecolors=plt.rcParams['axes.color_cycle'][k])
+                            axes[1].scatter(self.targets[m, :x.shape[1]].sum(1)*100, self.targets[m, x.shape[1]+self.heads*2+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
+                                           edgecolors=plt.rcParams['axes.color_cycle'][k], marker="x")
+                        
+                ymin, ymax = axes[0].get_ylim()
+                axes[1].set_ylim(ymin, ymax)
+                xmin, xmax = axes[0].get_xlim()
+                axes[1].set_xlim(xmin, xmax)
+
+                #ax1.plot([0, 100], [R, R], ls="--")
+                
+                #ax2.semilogy(range(100), self.counts)
+                ax2.axvline(0, color='black')
+                
+                policy_outputs = self.policy(
+                    obs,
+                    reparameterize=self.train_policy_with_reparameterization,
+                    return_log_prob=False,
+                )
+                next_new_actions, policy_mean, policy_log_std, next_log_pi = policy_outputs[:4]
+                pt_mean = F.tanh(policy_mean)
+                
+                policy_std = policy_log_std.exp()
+                policy_low = F.tanh(policy_mean - policy_std).detach().cpu().numpy()[..., 0]
+                policy_high = F.tanh(policy_mean + policy_std).detach().cpu().numpy()[..., 0]
+                
+                policy_mean = pt_mean.detach().cpu().numpy()
+                
+                axes[2].set_ylim(-1.1, 1.1)
+                
+                mean = policy_mean[:, :, 0]
+                std = policy_std[:, :, 0]
+                
+                axes[2].axhline(0, color='black')
+                axes[2].axvline(0, color='black')
+                
+                for i in range(self.heads):
+                    axes[2].fill_between(graph_x, policy_low[:, i], policy_high[:, i], color=plt.rcParams['axes.color_cycle'][i] + "20")
+                    left = q[:, i] > q2[:, i]
+                    axes[2].scatter(graph_x[left], mean[left, i], color=plt.rcParams['axes.color_cycle'][i], marker="+")
+                    
+                p = axes[2].plot(graph_x, mean)
+                
+                
+                # for i in range(self.heads):
+                #     maxact = q[:, i].argmax()
+                #     axes[1].scatter(x[maxact], mean[maxact, i])
+                
+                plt.tight_layout()
+                path = "{}/Q-{:04d}.png".format(logger._snapshot_dir, epoch)
+                print(path)
+                plt.savefig(path)
+            
             self._end_epoch(epoch)
                 
     def _take_step_in_env(self, observation):
@@ -342,6 +467,12 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         next_ob, raw_reward, terminal, env_info = (
             self.training_env.step(action)
         )
+        
+        #x = int(next_ob[0])
+        x = np.argmax(next_ob)
+        if x >= 0 and x < len(self.counts):
+            self.counts[x] += 1
+        
         self._n_env_steps_total += 1
         reward = raw_reward * self.reward_scale
         terminal = np.array([terminal])
@@ -382,8 +513,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             mask = np.array([np.random.uniform() > self.droprate for _ in range(self.heads)])#np.random.randint(2, size=self.heads)
             #mask = [1] * self.heads
 
-        observation = np.concatenate([observation, mask])
-        next_observation = np.concatenate([next_observation, np.zeros(self.heads)])
+        observation = np.concatenate([observation, mask, [self.current_behavior_policy]])
+        next_observation = np.concatenate([next_observation, np.zeros(self.heads), [self.current_behavior_policy]])
         
         self._current_path_builder.add_all(
             observations=observation,

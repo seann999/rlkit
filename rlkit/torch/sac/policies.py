@@ -144,6 +144,8 @@ class SplitMultiTanhGaussianPolicy(SplitMlp, ExplorationPolicy):
                     action = tanh_normal.sample()
 
             actions = action.view(-1, self.heads, self.action_dim)
+            means = means.view(-1, self.heads, self.action_dim)
+            log_stds = log_stds.view(-1, self.heads, self.action_dim)
                 
         return (
             actions, means, log_stds, log_probs, entropy, std,
@@ -272,6 +274,8 @@ class MultiTanhGaussianPolicy(Mlp, ExplorationPolicy):
                     action = tanh_normal.sample()
 
             actions = action.view(-1, self.heads, self.action_dim)
+            means = means.view(-1, self.heads, self.action_dim)
+            log_stds = log_stds.view(-1, self.heads, self.action_dim)
                 
         return (
             actions, means, log_stds, log_probs, entropy, std,

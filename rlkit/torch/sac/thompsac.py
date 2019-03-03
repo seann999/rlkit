@@ -396,7 +396,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                             for k in range(self.heads):
                                 # obs target(H) mask(H) entropybonus(H) policy(1)
                                 m = np.all([self.targets[:, -1] == i, self.targets[:, x.shape[1]+self.heads+k] == 1], 0)
-                                axes[1].scatter(self.targets[m, :x.shape[1]].sum(1)*100, self.targets[m, x.shape[1]+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
+                                axes[1].scatter(self.targets[m, :x.shape[1]].argmax(1), self.targets[m, x.shape[1]+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
                                                edgecolors=plt.rcParams['axes.color_cycle'][k])
                                 axes[1].scatter(self.targets[m, :x.shape[1]].sum(1)*100, self.targets[m, x.shape[1]+self.heads*2+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
                                                edgecolors=plt.rcParams['axes.color_cycle'][k], marker="x")
@@ -432,13 +432,20 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
 
                     axes[2].axhline(0, color='black')
                     axes[2].axvline(0, color='black')
+                    
+                    correct = (q > q2) == (mean < 0)
 
                     for i in range(self.heads):
                         axes[2].fill_between(graph_x, policy_low[:, i], policy_high[:, i], color=plt.rcParams['axes.color_cycle'][i] + "20")
-                        left = q[:, i] > q2[:, i]
-                        axes[2].scatter(graph_x[left], mean[left, i], color=plt.rcParams['axes.color_cycle'][i], marker="+")
+                        
+                        #left = q[:, i] > q2[:, i]
+                        #axes[2].scatter(graph_x[left], mean[left, i], color=plt.rcParams['axes.color_cycle'][i], marker="+")
+                        
+                    for i in range(self.heads):
+                        axes[2].scatter(graph_x[correct[:, i]], mean[correct[:, i], i], color="red")
+                        axes[2].scatter(graph_x[np.invert(correct[:, i])], mean[np.invert(correct[:, i]), i], color="blue")
 
-                    p = axes[2].plot(graph_x, mean)
+                    p = axes[2].plot(graph_x, mean, lw=1)
 
 
                     # for i in range(self.heads):

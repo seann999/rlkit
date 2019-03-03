@@ -17,7 +17,7 @@ class LineEnv(gym.Env, Serializable):
     @property
     def observation_space(self):
         return gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(1, ), dtype=np.float32)
+            low=-np.inf, high=np.inf, shape=(100, ), dtype=np.float32)
 
     @property
     def action_space(self):
@@ -53,9 +53,9 @@ class LineEnv(gym.Env, Serializable):
         return self.preprocess(self.pos), reward, done, None
     
     def preprocess(self, obs):
-        #vec = np.zeros(100)
-        #vec[min(max(0, int(obs)), 99)] = 1
-        vec = np.array([obs / 100])
+        vec = np.zeros(100)
+        vec[min(max(0, int(obs)), 99)] = 1
+        #vec = np.array([obs / 100])
         
         return vec
 

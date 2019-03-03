@@ -52,6 +52,7 @@ parser.add_argument('--split-critic', action='store_true')
 parser.add_argument('--range-prior', action='store_true')
 
 parser.add_argument('--load-prior', type=str, default=None)
+parser.add_argument('--load-policy', action='store_true')
 parser.add_argument('--lr', type=float, default=3e-4)
 parser.add_argument('--tau', type=float, default=0.001)
 parser.add_argument('--activation', type=str, default="elu")
@@ -62,6 +63,20 @@ from line import LineEnv
 import torch
 torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = True
+
+from rlkit.torch.networks import FlattenMlp, Mlp
+from rlkit.torch.core import PyTorchModule
+
+class CombineMlp(PyTorchModule):
+    def __init__(self, mlp1, mlp2):
+        self.save_init_params(locals())
+        super().__init__()
+        
+        self.mlp1 = mlp1
+        self.mlp2 = mlp2
+
+    def forward(self, *inputs, **kwargs):
+        return self.mlp1(*inputs) + 10 * self.mlp2(*inputs)
 
 def experiment(variant):
     if args.env == "line":
@@ -129,9 +144,8 @@ def experiment(variant):
     if args.load_prior:
         print("loading prior", args.load_prior)
         data = pickle.load(open(args.load_prior, "rb"))
-        pqf1 = data['qf1']
-        pqf2 = data['qf2']
-        print(pqf1)
+        pqf1 = CombineMlp(data['qf1'], data['pqf1'])
+        pqf2 = CombineMlp(data['qf2'], data['pqf2'])
     
     net_size = variant['net_size']
     
@@ -153,6 +167,10 @@ def experiment(variant):
             heads=heads,
             hidden_activation=hidden_act,
         )
+        
+    if args.load_policy:
+        print("loading policy")
+        policy = data['policy']
     
     if args.range_prior:
         coefs = [0, 0.01, 0.03, 0.1, 0.3, 1, 2, 4, 8, 16, 32, 64]

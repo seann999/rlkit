@@ -45,6 +45,7 @@ parser.add_argument('--reward-scale', type=float, default=1)
 parser.add_argument('--alpha', type=float, default=1)
 parser.add_argument('--int-w', type=float, default=0.1)
 parser.add_argument('--int-discount', type=float, default=0.99)
+parser.add_argument('--int-direct', action='store_true')
 parser.add_argument('--prior-offset', type=float, default=0)
 parser.add_argument('--dir', type=str, default="test")
 parser.add_argument('--env', type=str, default="line")
@@ -242,6 +243,7 @@ if __name__ == "__main__":
             discount=0.99,
             int_w=args.int_w,
             int_discount=args.int_discount,
+            int_direct=args.int_direct,
             newmethod=args.new,
             reward_scale=args.reward_scale,
             alpha=args.alpha,

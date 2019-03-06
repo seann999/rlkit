@@ -43,6 +43,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             alpha2=1,
             int_w = 0.1,
             int_discount=0.99,
+            int_direct=False,
             rnd=False,
             newmethod=False,
 
@@ -84,6 +85,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.alpha2 = alpha2
         self.int_w = int_w
         self.int_discount = int_discount
+        self.int_direct = int_direct
         self.rnd = rnd
         self.newmethod = newmethod
         self.qf1 = qf1
@@ -307,7 +309,11 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.alpha_optimizer2.step()
         alpha2 = self.log_alpha2.exp()
         
-        q_new_actions2 = self.qf3(obs, new_actions2[:, 0, :])
+        if self.int_direct:
+            q_new_actions2 = torch.min(self.qf1(obs, new_actions2[:, 0, :]), self.qf2(obs, new_actions2[:, 0, :]))
+            q_new_actions2 = (q_new_actions2.mean(1) + self.int_w * q_new_actions2.std(1)).unsqueeze(1)
+        else:
+            q_new_actions2 = self.qf3(obs, new_actions2[:, 0, :])
         kl_loss2 = (alpha2*log_pi2[:, torch.arange(self.heads), 0] - q_new_actions2).mean()
         mean_reg_loss2 = self.policy_mean_reg_weight * (policy_mean2**2).sum(1).mean()
         std_reg_loss2 = self.policy_std_reg_weight * (policy_log_std2**2).sum(1).mean()

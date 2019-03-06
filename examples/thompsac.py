@@ -44,6 +44,7 @@ parser.add_argument('--force', type=float, default=1)
 parser.add_argument('--reward-scale', type=float, default=1)
 parser.add_argument('--alpha', type=float, default=1)
 parser.add_argument('--int-w', type=float, default=0.1)
+parser.add_argument('--int-discount', type=float, default=0.99)
 parser.add_argument('--prior-offset', type=float, default=0)
 parser.add_argument('--dir', type=str, default="test")
 parser.add_argument('--env', type=str, default="line")
@@ -53,6 +54,7 @@ parser.add_argument('--split-critic', action='store_true')
 parser.add_argument('--range-prior', action='store_true')
 parser.add_argument('--autotune', action='store_true')
 parser.add_argument('--new', action='store_true')
+parser.add_argument('--rnd', action='store_true')
 
 parser.add_argument('--load-prior', type=str, default=None)
 parser.add_argument('--load-policy', action='store_true')
@@ -239,9 +241,11 @@ if __name__ == "__main__":
             max_path_length=maxpath,
             discount=0.99,
             int_w=args.int_w,
+            int_discount=args.int_discount,
             newmethod=args.new,
             reward_scale=args.reward_scale,
             alpha=args.alpha,
+            rnd=args.rnd,
             use_automatic_entropy_tuning = args.autotune,
             train_policy_with_reparameterization=True,
             min_num_steps_before_training=1000,

@@ -42,6 +42,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             alpha=1,
             alpha2=1,
             int_w = 0.1,
+            int_discount=0.99,
+            rnd=False,
             newmethod=False,
 
             train_policy_with_reparameterization=True,
@@ -81,6 +83,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.alpha = alpha
         self.alpha2 = alpha2
         self.int_w = int_w
+        self.int_discount = int_discount
+        self.rnd = rnd
         self.newmethod = newmethod
         self.qf1 = qf1
         self.qf2 = qf2
@@ -240,6 +244,10 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         target_v_values = next_q_new_actions + entropy_bonus
 
         q_target = rewards + (1. - terminals) * self.discount * target_v_values
+        
+        if self.rnd:
+            q_target *= 0
+            
         qf1_loss = (((q1_pred - q_target.detach())**2.0) * mask).sum(1)
         qf2_loss = (((q2_pred - q_target.detach())**2.0) * mask).sum(1)
         self.targets.append(np.hstack([obs.detach().cpu().numpy(), q_target.detach().cpu().numpy(), mask.detach().cpu().numpy(), ((1. - terminals) * self.discount * entropy_bonus).detach().cpu().numpy(), pol.cpu().numpy()[:, None]]))
@@ -260,7 +268,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         q_new_actions = all_q
         
         reward3 = rewards + self.int_w * torch.min(q1_pred.detach(), q2_pred.detach()).std(1).unsqueeze(1)
-        q3_target = reward3 + (1. - terminals) * self.discount * self.target_qf3(next_obs, next_new_actions3[:, 0, :])
+        q3_target = reward3 + (1. - terminals) * self.int_discount * self.target_qf3(next_obs, next_new_actions3[:, 0, :])
         self.targets2.append(np.hstack([obs.detach().cpu().numpy(), q3_target.detach().cpu().numpy(), actions.detach().cpu().numpy()]))
         q3_pred = self.qf3(obs, actions)
         qf3_loss = ((q3_pred - q3_target.detach())**2.0).sum(1)

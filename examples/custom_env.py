@@ -9,7 +9,7 @@ def create_swingup(force=0.5):
         pass
     
     def is_current_done():
-        return False
+        return abs(env.pole.position[0]) > 3
     
     def compute_reward(action):
         yield

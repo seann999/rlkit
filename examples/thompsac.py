@@ -43,6 +43,7 @@ parser.add_argument('--prior', type=float, default=10)
 parser.add_argument('--force', type=float, default=1)
 parser.add_argument('--reward-scale', type=float, default=1)
 parser.add_argument('--alpha', type=float, default=1)
+parser.add_argument('--int-w', type=float, default=0.1)
 parser.add_argument('--prior-offset', type=float, default=0)
 parser.add_argument('--dir', type=str, default="test")
 parser.add_argument('--env', type=str, default="line")
@@ -50,6 +51,8 @@ parser.add_argument('--ensemble', action='store_true')
 parser.add_argument('--split-actor', action='store_true')
 parser.add_argument('--split-critic', action='store_true')
 parser.add_argument('--range-prior', action='store_true')
+parser.add_argument('--autotune', action='store_true')
+parser.add_argument('--new', action='store_true')
 
 parser.add_argument('--load-prior', type=str, default=None)
 parser.add_argument('--load-policy', action='store_true')
@@ -138,6 +141,12 @@ def experiment(variant):
     
     qf1 = create_net(variant['net_size'])
     qf2 = create_net(variant['net_size'])
+    qf3 = FlattenMlp(
+        hidden_sizes=[variant['net_size'], variant['net_size']],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=1,
+        hidden_activation=hidden_act,
+    )
     pqf1 = create_net(args.prior_size)
     pqf2 = create_net(args.prior_size)
     
@@ -167,6 +176,13 @@ def experiment(variant):
             heads=heads,
             hidden_activation=hidden_act,
         )
+        policy2 = MultiTanhGaussianPolicy(
+            hidden_sizes=[net_size, net_size],
+            obs_dim=obs_dim + skill_dim,
+            action_dim=action_dim,
+            heads=heads,
+            hidden_activation=hidden_act,
+        )
         
     if args.load_policy:
         print("loading policy")
@@ -182,8 +198,10 @@ def experiment(variant):
     algorithm = ThompsonSoftActorCritic(
         env=env,
         policy=policy,
+        policy2=policy2,
         qf1=qf1,
         qf2=qf2,
+        qf3=qf3,
         pqf1=pqf1,
         pqf2=pqf2,
         prior_coef=prior,
@@ -204,7 +222,7 @@ if __name__ == "__main__":
         maxpath = 110
         evalsteps = 1000
         epochsteps = 200
-        numepochs = 500
+        numepochs = 500000
     elif args.env == "swingup":
         maxpath = 1000
         evalsteps = 1000
@@ -220,12 +238,18 @@ if __name__ == "__main__":
             batch_size=128,
             max_path_length=maxpath,
             discount=0.99,
+            int_w=args.int_w,
+            newmethod=args.new,
             reward_scale=args.reward_scale,
             alpha=args.alpha,
-            use_automatic_entropy_tuning = False,
+            use_automatic_entropy_tuning = args.autotune,
             train_policy_with_reparameterization=True,
             min_num_steps_before_training=1000,
             replay_buffer_size=int(1e6),
+            
+            policy_mean_reg_weight=0,
+            #policy_std_reg_weight=0,
+            #policy_pre_activation_weight=0,
 
             soft_target_tau=args.tau,
             policy_lr=args.lr,

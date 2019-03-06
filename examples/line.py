@@ -4,6 +4,8 @@ import numpy as np
 from garage.core import Serializable
 from garage.envs import Step
 
+import pickle
+import os
 
 class LineEnv(gym.Env, Serializable):
     
@@ -12,6 +14,12 @@ class LineEnv(gym.Env, Serializable):
     ):
         self.pos = 1
         self.steps = 0
+        if not os.path.exists("mask.p"):
+            pickle.dump(np.random.randint(0, 2, size=100) * 2 - 1, open("mask.p", "wb"))
+        self.mask = pickle.load(open("mask.p", "rb"))
+        #self.mask = [1]*50
+        #self.mask.extend([-1]*50)
+        #self.mask = np.array(self.mask)
         Serializable.quick_init(self, locals())
 
     @property
@@ -30,7 +38,7 @@ class LineEnv(gym.Env, Serializable):
         return self.preprocess(self.pos)
 
     def step(self, action):
-        a = action.copy()[0]
+        a = action.copy()[0] * self.mask[int(min(max(self.pos, 0), len(self.mask)-1))]
         a = np.clip(a, self.action_space.low, self.action_space.high)[0]
 
         self.pos += a

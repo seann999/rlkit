@@ -22,8 +22,10 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self,
             env,
             policy,
+            policy2,
             qf1,
             qf2,
+            qf3,
             pqf1,
             pqf2,
 
@@ -38,6 +40,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             policy_pre_activation_weight=0.,
             optimizer_class=optim.Adam,
             alpha=1,
+            alpha2=1,
+            int_w = 0.1,
+            newmethod=False,
 
             train_policy_with_reparameterization=True,
             soft_target_tau=1e-2,
@@ -72,7 +77,11 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         self.current_behavior_policy = 0
         self.policy = policy
+        self.policy2 = policy2
         self.alpha = alpha
+        self.alpha2 = alpha2
+        self.int_w = int_w
+        self.newmethod = newmethod
         self.qf1 = qf1
         self.qf2 = qf2
         self.pqf1 = pqf1
@@ -100,14 +109,28 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 lr=policy_lr,
             )
             
+        self.target_entropy = -np.prod(self.env.action_space.shape).item()  # heuristic value from Tuomas
+            
+        self.log_alpha2 = ptu.zeros(1, requires_grad=True)
+        self.alpha_optimizer2 = optimizer_class(
+            [self.log_alpha2],
+            lr=policy_lr,
+        )
+            
         self.prior_offset = prior_offset
 
+        self.qf3 = qf3
+        self.target_qf3 = self.qf3.copy()
         self.target_qf1 = qf1.copy()
         self.target_qf2 = qf2.copy()
         self.qf_criterion = nn.MSELoss()
 
         self.policy_optimizer = optimizer_class(
             policy.parameters(),
+            lr=policy_lr,
+        )
+        self.policy2_optimizer = optimizer_class(
+            self.policy2.parameters(),
             lr=policy_lr,
         )
         self.qf1_optimizer = optimizer_class(
@@ -118,9 +141,14 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self.qf2.parameters(),
             lr=qf_lr,
         )
+        self.qf3_optimizer = optimizer_class(
+            self.qf3.parameters(),
+            lr=qf_lr,
+        )
         
         self.counts = np.zeros(100)
         self.targets = []
+        self.targets2 = []
 
     def _do_training(self):
         batch = self.get_batch()
@@ -217,11 +245,25 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.targets.append(np.hstack([obs.detach().cpu().numpy(), q_target.detach().cpu().numpy(), mask.detach().cpu().numpy(), ((1. - terminals) * self.discount * entropy_bonus).detach().cpu().numpy(), pol.cpu().numpy()[:, None]]))
         #qf1_loss = (F.smooth_l1_loss(q1_pred, q_target.detach(), reduce=False) * mask).sum(1)
         #qf2_loss = (F.smooth_l1_loss(q2_pred, q_target.detach(), reduce=False) * mask).sum(1)
-
+        
+        next_policy_outputs3 = self.policy2(
+            next_obs,
+            reparameterize=self.train_policy_with_reparameterization,
+            return_log_prob=True,
+        )
+        next_new_actions3, _, _, next_log_pi = next_policy_outputs3[:4]
+        
         """
         VF Loss
         """
-        q_new_actions = get_q(self.qf1, self.qf2, obs, new_actions)
+        all_q = get_q(self.qf1, self.qf2, obs, new_actions)
+        q_new_actions = all_q
+        
+        reward3 = rewards + self.int_w * torch.min(q1_pred.detach(), q2_pred.detach()).std(1).unsqueeze(1)
+        q3_target = reward3 + (1. - terminals) * self.discount * self.target_qf3(next_obs, next_new_actions3[:, 0, :])
+        self.targets2.append(np.hstack([obs.detach().cpu().numpy(), q3_target.detach().cpu().numpy(), actions.detach().cpu().numpy()]))
+        q3_pred = self.qf3(obs, actions)
+        qf3_loss = ((q3_pred - q3_target.detach())**2.0).sum(1)
 
         """
         Policy Loss
@@ -242,6 +284,31 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         policy_reg_loss = mean_reg_loss + std_reg_loss + pre_activation_reg_loss
         policy_loss = kl_loss + policy_reg_loss
+        
+        ####
+        policy_outputs2 = self.policy2(
+            obs,
+            reparameterize=self.train_policy_with_reparameterization,
+            return_log_prob=True,
+        )
+        new_actions2, policy_mean2, policy_log_std2, log_pi2 = policy_outputs2[:4]
+        
+        alpha_loss2 = -(self.log_alpha2 * (log_pi2 + self.target_entropy).detach()).mean()
+        self.alpha_optimizer2.zero_grad()
+        alpha_loss2.backward()
+        self.alpha_optimizer2.step()
+        alpha2 = self.log_alpha2.exp()
+        
+        q_new_actions2 = self.qf3(obs, new_actions2[:, 0, :])
+        kl_loss2 = (alpha2*log_pi2[:, torch.arange(self.heads), 0] - q_new_actions2).mean()
+        mean_reg_loss2 = self.policy_mean_reg_weight * (policy_mean2**2).sum(1).mean()
+        std_reg_loss2 = self.policy_std_reg_weight * (policy_log_std2**2).sum(1).mean()
+        pre_tanh_value2 = policy_outputs2[-1]
+        pre_activation_reg_loss2 = self.policy_pre_activation_weight * (
+            (pre_tanh_value2**2).sum(dim=1).mean()
+        )
+        policy_reg_loss2 = mean_reg_loss2 + std_reg_loss2 + pre_activation_reg_loss2
+        policy_loss2 = kl_loss2 + policy_reg_loss2
 
         """
         Update networks
@@ -253,6 +320,10 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.qf2_optimizer.zero_grad()
         qf2_loss.mean().backward()
         self.qf2_optimizer.step()
+        
+        self.qf3_optimizer.zero_grad()
+        qf3_loss.mean().backward()
+        self.qf3_optimizer.step()
 
         #self.vf_optimizer.zero_grad()
         #vf_loss.backward()
@@ -261,6 +332,10 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.policy_optimizer.zero_grad()
         policy_loss.backward()
         self.policy_optimizer.step()
+        
+        self.policy2_optimizer.zero_grad()
+        policy_loss2.backward()
+        self.policy2_optimizer.step()
 
         self._update_target_network()
 
@@ -325,6 +400,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 save_itrs=True,
         ):
             self.targets = []
+            self.targets2 = []
             self._start_epoch(epoch)
             set_to_train_mode(self.training_env)
             for step in range(self.num_env_steps_per_epoch):
@@ -341,20 +417,23 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             
             if epoch % 10 == 0:
                 import matplotlib.pyplot as plt
+                import traceback
+                
+                cc = plt.rcParams['axes.color_cycle']
                 
                 plt.clf()
-                fig, axes = plt.subplots(1, 3)
-                fig.set_size_inches(18, 6)
+                fig, axes = plt.subplots(1, 5)
+                fig.set_size_inches(24, 6)
                 ax1 = axes[0]
                 #ax1.set_ylim(-1, 10)
-                ax2 = ax1.twinx()
+                #¥ax2 = ax1.twinx()
                 
-                graph_x = np.arange(-50, 100)
+                graph_x = np.arange(0, 100)
                 try:
                     x = np.array([self.training_env.preprocess(xx) for xx in graph_x])
                     obs = torch.from_numpy(x).float().cuda()# / 100
-                    acts = torch.from_numpy(np.ones((150, 1))).float().cuda()
-                    acts2 = torch.from_numpy(np.ones((150, 1))*-1).float().cuda()
+                    acts = torch.from_numpy(np.ones((100, 1)) * self.env.mask[:, None]).float().cuda()
+                    acts2 = torch.from_numpy(np.ones((100, 1))*-1 * self.env.mask[:, None]).float().cuda()
                     p1 = self.prior_coef * self.pqf1(obs, acts)
                     p2 = self.prior_coef * self.pqf2(obs, acts)
                     qf11 = self.qf1(obs, acts)
@@ -382,8 +461,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                     ax1.plot(graph_x, p4.cpu().detach().numpy(), c="red", ls=":", lw=1)
 
                     for i in range(self.heads):
-                        ax1.plot(graph_x, q[:, i], c=plt.rcParams['axes.color_cycle'][i], lw=3)
-                        ax1.plot(graph_x, q2[:, i], ls="--", c=plt.rcParams['axes.color_cycle'][i], lw=3)
+                        ax1.plot(graph_x, q[:, i], c=cc[i % len(cc)], lw=3)
+                        ax1.plot(graph_x, q2[:, i], ls="--", c=cc[i % len(cc)], lw=3)
 
                     ax1.set_ylim(min(q.min(), q2.min()), max(q.max(), q2.max()))
 
@@ -396,20 +475,23 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                             for k in range(self.heads):
                                 # obs target(H) mask(H) entropybonus(H) policy(1)
                                 m = np.all([self.targets[:, -1] == i, self.targets[:, x.shape[1]+self.heads+k] == 1], 0)
-                                axes[1].scatter(self.targets[m, :x.shape[1]].argmax(1), self.targets[m, x.shape[1]+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
-                                               edgecolors=plt.rcParams['axes.color_cycle'][k])
-                                axes[1].scatter(self.targets[m, :x.shape[1]].sum(1)*100, self.targets[m, x.shape[1]+self.heads*2+k], s=10, linewidths=0.5, alpha=0.5, c=plt.rcParams['axes.color_cycle'][k], #[i]
-                                               edgecolors=plt.rcParams['axes.color_cycle'][k], marker="x")
+                                axes[1].scatter(self.targets[m, :x.shape[1]].argmax(1), self.targets[m, x.shape[1]+k], s=10, linewidths=0.5, alpha=0.5, c=cc[k % len(cc)], #[i]
+                                               edgecolors=cc[k % len(cc)])
+                                axes[1].scatter(self.targets[m, :x.shape[1]].argmax(1), self.targets[m, x.shape[1]+self.heads*2+k], s=10, linewidths=0.5, alpha=0.5, c=cc[k % len(cc)], #[i]
+                                               edgecolors=cc[k % len(cc)], marker="x")
 
                     ymin, ymax = axes[0].get_ylim()
                     axes[1].set_ylim(ymin, ymax)
                     xmin, xmax = axes[0].get_xlim()
                     axes[1].set_xlim(xmin, xmax)
+                    
+                    ax22 = axes[1].twinx()
+                    ax22.semilogy(range(100), self.counts)
 
                     #ax1.plot([0, 100], [R, R], ls="--")
 
                     #ax2.semilogy(range(100), self.counts)
-                    ax2.axvline(0, color='black')
+                    axes[0].axvline(0, color='black')
 
                     policy_outputs = self.policy(
                         obs,
@@ -417,7 +499,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                         return_log_prob=False,
                     )
                     next_new_actions, policy_mean, policy_log_std, next_log_pi = policy_outputs[:4]
-                    pt_mean = F.tanh(policy_mean)
+                    mask_cuda = torch.FloatTensor(self.env.mask).cuda()
+                    pt_mean = F.tanh(policy_mean) * mask_cuda[:, None, None]
 
                     policy_std = policy_log_std.exp()
                     policy_low = F.tanh(policy_mean - policy_std).detach().cpu().numpy()[..., 0]
@@ -436,7 +519,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                     correct = (q > q2) == (mean < 0)
 
                     for i in range(self.heads):
-                        axes[2].fill_between(graph_x, policy_low[:, i], policy_high[:, i], color=plt.rcParams['axes.color_cycle'][i] + "20")
+                        axes[2].fill_between(graph_x, policy_low[:, i], policy_high[:, i], color=cc[i % len(cc)] + "20")
                         
                         #left = q[:, i] > q2[:, i]
                         #axes[2].scatter(graph_x[left], mean[left, i], color=plt.rcParams['axes.color_cycle'][i], marker="+")
@@ -447,6 +530,52 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
 
                     p = axes[2].plot(graph_x, mean, lw=1)
 
+                    axes[3].set_ylim(ymin, ymax)
+                    mean1 = q.mean(1)
+                    mean2 = q2.mean(1)
+                    std1 = q.std(1)
+                    std2 = q2.std(1)
+                    
+                    plot1 = axes[3].plot(graph_x, mean1, label="right")
+                    axes[3].plot(graph_x, std1, color=plot1[0].get_color(), ls="--")
+                    plot2 = axes[3].plot(graph_x, mean2, label="left")
+                    axes[3].plot(graph_x, std2, color=plot2[0].get_color(), ls="--")
+                    axes[3].fill_between(graph_x, mean1-std1, mean1+std1, color=plot1[0].get_color() + "20")
+                    axes[3].fill_between(graph_x, mean2-std2, mean2+std2, color=plot2[0].get_color() + "20")
+
+                    ax32 = axes[3].twinx()
+                    
+                    if len(self.targets2) > 0:
+                        self.targets2 = np.vstack(self.targets2)
+                        move = self.targets2[:, x.shape[1]+1]
+                        
+                        left = move < 0
+                        ax32.scatter(self.targets2[left, :x.shape[1]].argmax(1), self.targets2[left, x.shape[1]], s=5, c=move[left], cmap="Reds")
+                        right = move >= 0
+                        ax32.scatter(self.targets2[right, :x.shape[1]].argmax(1), self.targets2[right, x.shape[1]], s=5, c=move[right], cmap="Blues")
+                        
+                    qf31 = self.qf3(obs, acts).cpu().detach().numpy()[:, 0]
+                    qf32 = self.qf3(obs, acts2).cpu().detach().numpy()[:, 0]
+                    ax32.plot(graph_x, qf31, label="right", ls=":")
+                    ax32.plot(graph_x, qf32, label="left", ls=":")
+                    axes[3].legend()
+                    
+                    policy_outputs = self.policy2(
+                        obs,
+                        reparameterize=self.train_policy_with_reparameterization,
+                        return_log_prob=False,
+                    )
+                    next_new_actions, policy_mean, policy_log_std, next_log_pi = policy_outputs[:4]
+                    pt_mean = F.tanh(policy_mean) * mask_cuda[:, None, None]
+                    
+                    policy_std = policy_log_std.exp()
+                    policy_low = (F.tanh(policy_mean - policy_std) * mask_cuda[:, None, None]).detach().cpu().numpy()[:, 0, 0]
+                    policy_high = (F.tanh(policy_mean + policy_std) * mask_cuda[:, None, None]).detach().cpu().numpy()[:, 0, 0]
+                    
+                    policy_mean = pt_mean.detach().cpu().numpy()[:, 0, 0]
+                    axes[4].set_ylim(-1, 1)
+                    plot3 = axes[4].plot(graph_x, policy_mean)
+                    axes[4].fill_between(graph_x, policy_low, policy_high, color=plot3[0].get_color() + "20")
 
                     # for i in range(self.heads):
                     #     maxact = q[:, i].argmax()
@@ -455,8 +584,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                     plt.tight_layout()
                     path = "{}/Q-{:04d}.png".format(logger._snapshot_dir, epoch)
                     plt.savefig(path)
-                except:
-                    pass
+                except Exception as e:
+                    print(e)
+                    traceback.print_exc()
             
             self._end_epoch(epoch)
                 
@@ -465,10 +595,17 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         #    observation,
         #)
         self.policy.set_num_steps_total(self._n_env_steps_total)
-        action, agent_info = self.policy.get_action(
-            observation,
-            self.current_behavior_policy,
-        )
+        
+        if self.newmethod:
+            action, agent_info = self.policy2.get_action(
+                observation,
+                0,#self.current_behavior_policy,
+            )
+        else:
+            action, agent_info = self.policy.get_action(
+                observation,
+                self.current_behavior_policy,
+            )
         
         if self.render:
             self.training_env.render()
@@ -478,7 +615,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         
         #x = int(next_ob[0])
-        x = np.argmax(next_ob)
+        x = int(next_ob.argmax())
         if x >= 0 and x < len(self.counts):
             self.counts[x] += 1
         
@@ -549,17 +686,21 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         nets = [
             self.qf1,
             self.qf2,
+            self.qf3,
             self.target_qf1,
             self.target_qf2,
+            self.target_qf3,
             self.pqf1,
             self.pqf2,
             self.policy,
+            self.policy2,
         ]
         return nets
 
     def _update_target_network(self):
         ptu.soft_update_from_to(self.qf1, self.target_qf1, self.soft_target_tau)
         ptu.soft_update_from_to(self.qf2, self.target_qf2, self.soft_target_tau)
+        ptu.soft_update_from_to(self.qf3, self.target_qf3, self.soft_target_tau)
 
     def get_epoch_snapshot(self, epoch):
         snapshot = super().get_epoch_snapshot(epoch)

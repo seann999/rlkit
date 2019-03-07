@@ -269,7 +269,10 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         all_q = get_q(self.qf1, self.qf2, obs, new_actions)
         q_new_actions = all_q
         
-        reward3 = rewards + self.int_w * torch.min(q1_pred.detach(), q2_pred.detach()).std(1).unsqueeze(1)
+        if self.rnd:
+            reward3 = rewards + self.int_w * (q1_pred.detach()**2.0).sum(1).unsqueeze(1)
+        else:
+            reward3 = rewards + self.int_w * torch.min(q1_pred.detach(), q2_pred.detach()).std(1).unsqueeze(1)
         q3_target = reward3 + (1. - terminals) * self.int_discount * self.target_qf3(next_obs, next_new_actions3[:, 0, :])
         self.targets2.append(np.hstack([obs.detach().cpu().numpy(), q3_target.detach().cpu().numpy(), actions.detach().cpu().numpy()]))
         q3_pred = self.qf3(obs, actions)

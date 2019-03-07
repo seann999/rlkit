@@ -58,7 +58,7 @@ def simulate_policy(args):
         policy = data['policies'][0]
     else:
         policy = data['policy']
-    env = NormalizedBoxEnv(create_swingup(0.8))#data['env']
+    env = NormalizedBoxEnv(create_swingup(0.5))#data['env']
     
     print("Policy loaded")
     if args.gpu:

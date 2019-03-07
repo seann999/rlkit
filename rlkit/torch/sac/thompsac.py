@@ -270,9 +270,11 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         q_new_actions = all_q
         
         if self.rnd:
-            reward3 = rewards + self.int_w * (q1_pred.detach()**2.0).sum(1).unsqueeze(1)
+            int_reward = (q1_pred.detach()**2.0).sum(1).unsqueeze(1)
+            reward3 = rewards + self.int_w * int_reward
         else:
-            reward3 = rewards + self.int_w * torch.min(q1_pred.detach(), q2_pred.detach()).std(1).unsqueeze(1)
+            int_reward = torch.min(q1_pred.detach(), q2_pred.detach()).std(1).unsqueeze(1)
+            reward3 = rewards + self.int_w * int_reward
         q3_target = reward3 + (1. - terminals) * self.int_discount * self.target_qf3(next_obs, next_new_actions3[:, 0, :])
         self.targets2.append(np.hstack([obs.detach().cpu().numpy(), q3_target.detach().cpu().numpy(), actions.detach().cpu().numpy()]))
         q3_pred = self.qf3(obs, actions)
@@ -380,6 +382,10 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             ))
             self.eval_statistics['Policy Reg Loss'] = np.mean(ptu.get_numpy(
                 policy_reg_loss
+            ))
+            self.eval_statistics.update(create_stats_ordered_dict(
+                'Intrinsic Reward',
+                ptu.get_numpy(int_reward),
             ))
             self.eval_statistics.update(create_stats_ordered_dict(
                 'Q1 Predictions',

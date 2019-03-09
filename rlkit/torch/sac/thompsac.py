@@ -58,10 +58,16 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             target_entropy=None,
             **kwargs
     ):
-        if eval_deterministic:
-            eval_policy = MultiMakeDeterministic(policy)
+        if newmethod:
+            if eval_deterministic:
+                eval_policy = MultiMakeDeterministic(policy2)
+            else:
+                eval_policy = policy2
         else:
-            eval_policy = policy
+            if eval_deterministic:
+                eval_policy = MultiMakeDeterministic(policy)
+            else:
+                eval_policy = policy
             
         self.heads = heads
         self.prior_coef = prior_coef

@@ -46,7 +46,6 @@ parser.add_argument('--alpha', type=float, default=1)
 parser.add_argument('--int-w', type=float, default=0.1)
 parser.add_argument('--int-discount', type=float, default=0.99)
 parser.add_argument('--int-direct', action='store_true')
-parser.add_argument('--prior-offset', type=float, default=0)
 parser.add_argument('--dir', type=str, default="test")
 parser.add_argument('--env', type=str, default="line")
 parser.add_argument('--ensemble', action='store_true')
@@ -144,16 +143,10 @@ def experiment(variant):
     
     qf1 = create_net(variant['net_size'])
     qf2 = create_net(variant['net_size'])
-    qf3 = FlattenMlp(
+    qfB = FlattenMlp(
         hidden_sizes=[variant['net_size'], variant['net_size']],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
-        hidden_activation=hidden_act,
-    )
-    eqf = FlattenMlp(
-        hidden_sizes=[variant['net_size'], variant['net_size']],
-        input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
+        output_size=2,
         hidden_activation=hidden_act,
     )
     pqf1 = create_net(args.prior_size)
@@ -185,18 +178,18 @@ def experiment(variant):
             heads=heads,
             hidden_activation=hidden_act,
         )
-        policy2 = MultiTanhGaussianPolicy(
+        policyB = MultiTanhGaussianPolicy(
             hidden_sizes=[net_size, net_size],
             obs_dim=obs_dim + skill_dim,
             action_dim=action_dim,
-            heads=heads,
+            heads=2,
             hidden_activation=hidden_act,
         )
-        epolicy = MultiTanhGaussianPolicy(
+        policyC = MultiTanhGaussianPolicy(
             hidden_sizes=[net_size, net_size],
             obs_dim=obs_dim + skill_dim,
             action_dim=action_dim,
-            heads=heads,
+            heads=1,
             hidden_activation=hidden_act,
         )
         
@@ -214,17 +207,15 @@ def experiment(variant):
     algorithm = ThompsonSoftActorCritic(
         env=env,
         policy=policy,
-        policy2=policy2,
+        policyB=policyB,
+        policyC=policyC,
         qf1=qf1,
         qf2=qf2,
-        qf3=qf3,
+        qfB=qfB,
         pqf1=pqf1,
         pqf2=pqf2,
-        epolicy=epolicy,
-        eqf=eqf,
         prior_coef=prior,
         droprate=args.drop,
-        prior_offset=args.prior_offset,
         heads=heads,
         #disc=disc,
         #skill_dim=skill_dim,

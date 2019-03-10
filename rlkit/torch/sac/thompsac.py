@@ -22,27 +22,25 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self,
             env,
             policy,
-            policy2,
+            policyB,
+            policyC,
             qf1,
             qf2,
-            qf3,
+            qfB,
             pqf1,
             pqf2,
-            epolicy,
-            eqf,
 
             policy_lr=1e-3,
             qf_lr=1e-3,
             droprate=0.5,
             prior_coef=1,
-            prior_offset=0,
             heads=10,
             policy_mean_reg_weight=1e-3,
             policy_std_reg_weight=1e-3,
             policy_pre_activation_weight=0.,
             optimizer_class=optim.Adam,
             alpha=1,
-            alpha2=1,
+            alphaC=1,
             int_w = 0.1,
             int_discount=0.99,
             int_direct=False,
@@ -62,9 +60,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
     ):
         if newmethod:
             if eval_deterministic:
-                eval_policy = MultiMakeDeterministic(epolicy)
+                eval_policy = MultiMakeDeterministic(policyC)
             else:
-                eval_policy = epolicy
+                eval_policy = policyC
         else:
             if eval_deterministic:
                 eval_policy = MultiMakeDeterministic(policy)
@@ -88,10 +86,10 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         self.current_behavior_policy = 0
         self.policy = policy
-        self.policy2 = policy2
-        self.epolicy = epolicy
+        self.policyB = policyB
+        self.policyC = policyC
         self.alpha = alpha
-        self.alpha2 = alpha2
+        self.alphaC = alphaC
         self.int_w = int_w
         self.int_discount = int_discount
         self.int_direct = int_direct
@@ -126,38 +124,27 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             
         self.target_entropy = -np.prod(self.env.action_space.shape).item()  # heuristic value from Tuomas
             
-        self.log_alpha2 = ptu.zeros(1, requires_grad=True)
-        self.alpha_optimizer2 = optimizer_class(
-            [self.log_alpha2],
-            lr=policy_lr,
-        )
-        
-        self.log_alpha3 = ptu.zeros(1, requires_grad=True)
-        self.alpha_optimizer3 = optimizer_class(
-            [self.log_alpha3],
+        self.log_alphaC = ptu.zeros(1, requires_grad=True)
+        self.alpha_optimizerC = optimizer_class(
+            [self.log_alphaC],
             lr=policy_lr,
         )
             
-        self.prior_offset = prior_offset
-
-        self.qf3 = qf3
-        self.eqf = eqf
-        self.target_qf3 = self.qf3.copy()
+        self.qfB = qfB
+        self.target_qfB = self.qfB.copy()
         self.target_qf1 = qf1.copy()
         self.target_qf2 = qf2.copy()
-        self.target_eqf = eqf.copy()
-        self.qf_criterion = nn.MSELoss()
 
         self.policy_optimizer = optimizer_class(
             policy.parameters(),
             lr=policy_lr,
         )
-        self.policy2_optimizer = optimizer_class(
-            self.policy2.parameters(),
+        self.policyB_optimizer = optimizer_class(
+            self.policyB.parameters(),
             lr=policy_lr,
         )
-        self.epolicy_optimizer = optimizer_class(
-            self.epolicy.parameters(),
+        self.policyC_optimizer = optimizer_class(
+            self.policyC.parameters(),
             lr=policy_lr,
         )
         self.qf1_optimizer = optimizer_class(
@@ -168,18 +155,59 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self.qf2.parameters(),
             lr=qf_lr,
         )
-        self.qf3_optimizer = optimizer_class(
-            self.qf3.parameters(),
-            lr=qf_lr,
-        )
-        self.eqf_optimizer = optimizer_class(
-            self.eqf.parameters(),
+        self.qfB_optimizer = optimizer_class(
+            self.qfB.parameters(),
             lr=qf_lr,
         )
         
         self.counts = np.zeros(100)
         self.targets = []
         self.targets2 = []
+        
+    def get_q(self, obs, actions, qf1, qf2=None, pqf1=None, pqf2=None):
+        # actions: N x K x A
+        
+        K = actions.shape[1]
+        A = actions.shape[2]
+        S = obs.shape[1]
+        
+        if type(qf1) == FlattenMlp:
+            # NK x A
+            flat_actions = actions.view(-1, A)
+
+            # N x S -> NK x S
+            expand_obs = obs.repeat(1, K).view(-1, S)
+
+            if qf2:
+                # NK x K
+                q = torch.min(
+                    qf1(expand_obs, flat_actions) + self.prior_coef * pqf1(expand_obs, flat_actions),
+                    qf2(expand_obs, flat_actions) + self.prior_coef * pqf2(expand_obs, flat_actions),
+                )
+            elif pqf1:
+                q = qf1(expand_obs, flat_actions) + self.prior_coef * pqf1(expand_obs, flat_actions)
+            else:
+                q = qf1(expand_obs, flat_actions)
+
+            # N x K x K
+            q = q.view(-1, K, K)
+            q = q[:, torch.arange(K), torch.arange(K)]
+
+            return q
+        elif type(qf1) == SplitFlattenMlp or type(qf1) == EnsembleFlattenMlp:
+            inp = [[obs, actions[:, i, :]] for i in range(K)]
+
+            if qf2:
+                q = torch.min(
+                    qf1(inp) + self.prior_coef * pqf1(inp),
+                    qf2(inp) + self.prior_coef * pqf2(inp),
+                )
+            elif pqf1:
+                q = qf1(inp) + self.prior_coef * pqf1(inp)
+            else:
+                q = qf1(inp)
+
+            return q
 
     def _do_training(self):
         batch = self.get_batch()
@@ -191,25 +219,25 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         actions = batch['actions']
         next_obs = batch['next_observations'][:, :-self.heads-1]
 
-        q1_pred = self.qf1(obs, actions) + self.pqf1(obs, actions) * self.prior_coef + self.prior_offset
-        q2_pred = self.qf2(obs, actions) + self.prior_coef * self.pqf2(obs, actions) + self.prior_offset
+        q1_pred = self.qf1(obs, actions) + self.prior_coef * self.pqf1(obs, actions)
+        q2_pred = self.qf2(obs, actions) + self.prior_coef * self.pqf2(obs, actions)
         
         qf1_loss, qf2_loss = 0, 0
 
-        # Make sure policy accounts for squashing functions like tanh correctly!
+        """
+        Calculate log pi & other policy vars
+        """
         policy_outputs = self.policy(
             obs,
             reparameterize=self.train_policy_with_reparameterization,
             return_log_prob=True,
         )
         new_actions, policy_mean, policy_log_std, log_pi = policy_outputs[:4]
-        
-        # new_actions: 128 x 10 x 1
 
+        """
+        Update alpha
+        """
         if self.use_automatic_entropy_tuning:
-            """
-            Alpha Loss
-            """
             alpha_loss = -(self.log_alpha * (log_pi + self.target_entropy).detach()).mean()
             self.alpha_optimizer.zero_grad()
             alpha_loss.backward()
@@ -220,7 +248,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             alpha_loss = 0
 
         """
-        QF Loss
+        Update Q Ensemble
         """
         next_policy_outputs = self.policy(
             next_obs,
@@ -228,46 +256,12 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             return_log_prob=True,
         )
         next_new_actions, _, _, next_log_pi = next_policy_outputs[:4]
-        # 128 x 10
         
-        if type(self.qf1) == FlattenMlp:
-            def get_q(qf1, qf2, obs, actions):
-                # actions: 128 x 10 x 3
-
-                # 1280 x 3
-                flat_actions = actions.view(-1, actions.shape[2])
-
-                # 128 x 5 -> 1280 x 5
-                expand_obs = obs.repeat(1, self.heads).view(-1, obs.shape[1])
-
-                # 1280 x 10
-                q = torch.min(
-                    self.target_qf1(expand_obs, flat_actions) + self.prior_coef * self.pqf1(expand_obs, flat_actions) + self.prior_offset,
-                    self.target_qf2(expand_obs, flat_actions) + self.prior_coef * self.pqf2(expand_obs, flat_actions) + self.prior_offset,
-                )
-
-                # 128 x 10 x 10
-                q = q.view(-1, self.heads, self.heads)
-                q = q[:, torch.arange(self.heads), torch.arange(self.heads)]
-
-                return q
-        elif type(self.qf1) == SplitFlattenMlp or type(self.qf1) == EnsembleFlattenMlp:
-            def get_q(qf1, qf2, obs, actions):
-                inp = [[obs, actions[:, i, :]] for i in range(actions.shape[1])]
-                inp2 = [[obs, actions[:, i, :]] for i in range(actions.shape[1])]
-
-                q = torch.min(
-                    self.target_qf1(inp) + self.prior_coef * self.pqf1(inp2) + self.prior_offset,
-                    self.target_qf2(inp) + self.prior_coef * self.pqf2(inp2) + self.prior_offset,
-                )
-
-                return q
+        # N x K
+        next_q_new_actions = self.get_q(next_obs, next_new_actions, self.target_qf1, self.target_qf2, self.pqf1, self.pqf2)
         
-        # 128 x 10
-        next_q_new_actions = get_q(self.target_qf1, self.target_qf2, next_obs, next_new_actions)
-        
-        # 128 x 10
-        entropy_bonus = -alpha*next_log_pi[:, torch.arange(self.heads), 0]
+        # N x K
+        entropy_bonus = -alpha * next_log_pi[:, torch.arange(self.heads), 0]
         target_v_values = next_q_new_actions + entropy_bonus
 
         q_target = rewards + (1. - terminals) * self.discount * target_v_values
@@ -277,57 +271,16 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             
         qf1_loss = (((q1_pred - q_target.detach())**2.0) * mask).sum(1)
         qf2_loss = (((q2_pred - q_target.detach())**2.0) * mask).sum(1)
+        
         self.targets.append(np.hstack([obs.detach().cpu().numpy(), q_target.detach().cpu().numpy(), mask.detach().cpu().numpy(), ((1. - terminals) * self.discount * entropy_bonus).detach().cpu().numpy(), pol.cpu().numpy()[:, None]]))
-        #qf1_loss = (F.smooth_l1_loss(q1_pred, q_target.detach(), reduce=False) * mask).sum(1)
-        #qf2_loss = (F.smooth_l1_loss(q2_pred, q_target.detach(), reduce=False) * mask).sum(1)
-        
-        next_policy_outputs3 = self.policy2(
-            next_obs,
-            reparameterize=self.train_policy_with_reparameterization,
-            return_log_prob=True,
-        )
-        next_new_actions3, _, _, _ = next_policy_outputs3[:4]
         
         """
-        VF Loss
+        Update ensemble maximizers
         """
-        all_q = get_q(self.qf1, self.qf2, obs, new_actions)
-        q_new_actions = all_q
+        q_new_actions = self.get_q(obs, new_actions, self.qf1, self.qf2, self.pqf1, self.pqf2)
         
-        if self.rnd:
-            int_reward = (q1_pred.detach()**2.0).sum(1).unsqueeze(1)
-            reward3 = rewards + self.int_w * int_reward
-        else:
-            int_reward = torch.min(q1_pred.detach(), q2_pred.detach()).std(1).unsqueeze(1)
-            reward3 = rewards + self.int_w * int_reward
-        q3_target = reward3 + (1. - terminals) * self.int_discount * self.target_qf3(next_obs, next_new_actions3[:, 0, :])
-        self.targets2.append(np.hstack([obs.detach().cpu().numpy(), q3_target.detach().cpu().numpy(), actions.detach().cpu().numpy()]))
-        
-        q3_pred = self.qf3(obs, actions)
-        qf3_loss = ((q3_pred - q3_target.detach())**2.0).sum(1)
-        
-        
-        next_policy_outputs4 = self.epolicy(
-            next_obs,
-            reparameterize=self.train_policy_with_reparameterization,
-            return_log_prob=True,
-        )
-        next_new_actions4, _, _, _ = next_policy_outputs4[:4]
-        q4_target = rewards + (1. - terminals) * self.discount * self.target_eqf(next_obs, next_new_actions4[:, 0, :])
-        q4_pred = self.eqf(obs, actions)
-        qf4_loss = ((q4_pred - q4_target.detach())**2.0).sum(1)
+        kl_loss = (alpha * log_pi[:, torch.arange(self.heads), 0] - q_new_actions).mean()
 
-        """
-        Policy Loss
-        """
-        if self.train_policy_with_reparameterization:
-            kl_loss = (alpha*log_pi[:, torch.arange(self.heads), 0] - q_new_actions).mean()
-        else:
-            #v_pred = q_new_actions - alpha*log_pi
-            log_policy_target = q_new_actions# - v_pred
-            kl_loss = (
-                log_pi * (alpha*log_pi - log_policy_target).detach()
-            ).mean()
         mean_reg_loss = self.policy_mean_reg_weight * (policy_mean**2).sum(1).mean()
         std_reg_loss = self.policy_std_reg_weight * (policy_log_std**2).sum(1).mean()
         pre_tanh_value = policy_outputs[-1]
@@ -337,62 +290,100 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         policy_reg_loss = mean_reg_loss + std_reg_loss + pre_activation_reg_loss
         policy_loss = kl_loss + policy_reg_loss
         
-        ####
-        policy_outputs2 = self.policy2(
+        """
+        Calculate log pi & other policy vars (2)
+        """
+        # N x 2
+        # one head for greedy, other for curious
+        policy_outputsB = self.policyB(
             obs,
             reparameterize=self.train_policy_with_reparameterization,
             return_log_prob=True,
         )
-        new_actions2, policy_mean2, policy_log_std2, log_pi2 = policy_outputs2[:4]
+        new_actionsB, policy_meanB, policy_log_stdB, log_piB = policy_outputsB[:4]
         
-        alpha_loss2 = -(self.log_alpha2 * (log_pi2 + self.target_entropy).detach()).mean()
-        self.alpha_optimizer2.zero_grad()
-        alpha_loss2.backward()
-        self.alpha_optimizer2.step()
-        alpha2 = self.log_alpha2.exp()
-        
-        if self.int_direct:
-            q_new_actions2 = torch.min(self.qf1(obs, new_actions2[:, 0, :]), self.qf2(obs, new_actions2[:, 0, :]))
-            q_new_actions2 = (q_new_actions2.mean(1) + self.int_w * q_new_actions2.std(1)).unsqueeze(1)
+        """
+        Update Q B
+        """
+        # calculate intrinsic rewards (Nx1)
+        if self.rnd:
+            int_rewards = (q1_pred.detach()**2.0).sum(1).unsqueeze(1)
         else:
-            q_new_actions2 = self.qf3(obs, new_actions2[:, 0, :])
-        kl_loss2 = (alpha2*log_pi2[:, torch.arange(self.heads), 0] - q_new_actions2).mean()
-        mean_reg_loss2 = self.policy_mean_reg_weight * (policy_mean2**2).sum(1).mean()
-        std_reg_loss2 = self.policy_std_reg_weight * (policy_log_std2**2).sum(1).mean()
-        pre_tanh_value2 = policy_outputs2[-1]
-        pre_activation_reg_loss2 = self.policy_pre_activation_weight * (
-            (pre_tanh_value2**2).sum(dim=1).mean()
-        )
-        policy_reg_loss2 = mean_reg_loss2 + std_reg_loss2 + pre_activation_reg_loss2
-        policy_loss2 = kl_loss2 + policy_reg_loss2
+            int_rewards = torch.min(q1_pred.detach(), q2_pred.detach()).std(1).unsqueeze(1)
         
-        ####
-        policy_outputs3 = self.epolicy(
+        # N x 2
+        # calc maximum
+        next_policy_outputsB = self.policyB(
+            next_obs,
+            reparameterize=self.train_policy_with_reparameterization,
+            return_log_prob=True,
+        )
+        next_new_actionsB, _, _, next_log_piB = next_policy_outputsB[:4]
+        
+        # N x 2
+        next_q_new_actionsB = self.get_q(next_obs, next_new_actionsB, self.target_qfB)
+        next_QE = next_q_new_actionsB[:, [0]]
+        next_QI = next_q_new_actionsB[:, [1]]
+        
+        entropy_bonusB = 0#-alphaB * next_log_piB[:, [1], 0]
+        # N x 1
+        target_v_valuesB = next_QE + entropy_bonusB
+        # extrinsic target value
+        qB_target_E = rewards + (1. - terminals) * self.discount * target_v_valuesB
+        self.targets2.append(np.hstack([obs.detach().cpu().numpy(), qB_target_E.detach().cpu().numpy(), actions.detach().cpu().numpy()]))
+        # extrinsic + intrinsic target value
+        qB_target_I = int_rewards + (1. - terminals) * self.int_discount * next_QI
+        qB_target = torch.cat([qB_target_E, qB_target_I], 1)
+        
+        qB_pred = self.qfB(obs, actions)
+        qB_loss = ((qB_pred - qB_target.detach())**2.0).sum(1)
+        
+        """
+        Update policy B
+        """
+        q_new_actionsB = self.get_q(obs, new_actionsB, self.qfB)
+        
+        alphaB = 0
+        kl_lossB = (alphaB * log_piB[:, torch.arange(2), 0] - q_new_actionsB).mean()
+
+        mean_reg_lossB = self.policy_mean_reg_weight * (policy_meanB**2).sum(1).mean()
+        std_reg_lossB = self.policy_std_reg_weight * (policy_log_stdB**2).sum(1).mean()
+        pre_tanh_valueB = policy_outputsB[-1]
+        pre_activation_reg_lossB = self.policy_pre_activation_weight * (
+            (pre_tanh_valueB**2).sum(dim=1).mean()
+        )
+        policy_reg_lossB = mean_reg_lossB + std_reg_lossB + pre_activation_reg_lossB
+        policy_lossB = kl_lossB + policy_reg_lossB
+        
+        """
+        Update policy C
+        """
+        policy_outputsC = self.policyC(
             obs,
             reparameterize=self.train_policy_with_reparameterization,
             return_log_prob=True,
         )
-        new_actions3, policy_mean3, policy_log_std3, log_pi3 = policy_outputs3[:4]
+        new_actionsC, policy_meanC, policy_log_stdC, log_piC = policy_outputsC[:4]
         
-        alpha_loss3 = -(self.log_alpha3 * (log_pi3 + self.target_entropy).detach()).mean()
-        self.alpha_optimizer3.zero_grad()
-        alpha_loss3.backward()
-        self.alpha_optimizer3.step()
-        alpha3 = self.log_alpha3.exp()
+        alpha_lossC = -(self.log_alphaC * (log_piC + self.target_entropy).detach()).mean()
+        self.alpha_optimizerC.zero_grad()
+        alpha_lossC.backward()
+        self.alpha_optimizerC.step()
+        alphaC = self.log_alphaC.exp()
         
-        q_new_actions3 = self.eqf(obs, new_actions3[:, 0, :])
-            
-        kl_loss3 = (alpha3*log_pi3[:, torch.arange(self.heads), 0] - q_new_actions3).mean()
-        mean_reg_loss3 = self.policy_mean_reg_weight * (policy_mean3**2).sum(1).mean()
-        std_reg_loss3 = self.policy_std_reg_weight * (policy_log_std3**2).sum(1).mean()
-        pre_tanh_value3 = policy_outputs3[-1]
-        pre_activation_reg_loss3 = self.policy_pre_activation_weight * (
-            (pre_tanh_value3**2).sum(dim=1).mean()
+        q_new_actionsC = self.qfB(obs, new_actionsC[:, 0, :])
+        q_new_actionsC = q_new_actionsC[:, 0] + self.int_w * q_new_actionsC[:, 1]
+        
+        kl_lossC = (alphaC * log_piC[:, 0, 0] - q_new_actionsC).mean()
+
+        mean_reg_lossC = self.policy_mean_reg_weight * (policy_meanC**2).sum(1).mean()
+        std_reg_lossC = self.policy_std_reg_weight * (policy_log_stdC**2).sum(1).mean()
+        pre_tanh_valueC = policy_outputsC[-1]
+        pre_activation_reg_lossC = self.policy_pre_activation_weight * (
+            (pre_tanh_valueC**2).sum(dim=1).mean()
         )
-        policy_reg_loss3 = mean_reg_loss3 + std_reg_loss3 + pre_activation_reg_loss3
-        policy_loss3 = kl_loss3 + policy_reg_loss3
-        
-        ####
+        policy_reg_lossC = mean_reg_lossC + std_reg_lossC + pre_activation_reg_lossC
+        policy_lossC = kl_lossC + policy_reg_lossC
 
         """
         Update networks
@@ -405,30 +396,22 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         qf2_loss.mean().backward()
         self.qf2_optimizer.step()
         
-        self.qf3_optimizer.zero_grad()
-        qf3_loss.mean().backward()
-        self.qf3_optimizer.step()
-        
-        self.eqf_optimizer.zero_grad()
-        qf4_loss.mean().backward()
-        self.eqf_optimizer.step()
-
-        #self.vf_optimizer.zero_grad()
-        #vf_loss.backward()
-        #self.vf_optimizer.step()
+        self.qfB_optimizer.zero_grad()
+        qB_loss.mean().backward()
+        self.qfB_optimizer.step()
 
         self.policy_optimizer.zero_grad()
         policy_loss.backward()
         self.policy_optimizer.step()
         
-        self.policy2_optimizer.zero_grad()
-        policy_loss2.backward()
-        self.policy2_optimizer.step()
+        self.policyB_optimizer.zero_grad()
+        policy_lossB.backward()
+        self.policyB_optimizer.step()
         
-        self.epolicy_optimizer.zero_grad()
-        policy_loss3.backward()
-        self.epolicy_optimizer.step()
-
+        self.policyC_optimizer.zero_grad()
+        policy_lossC.backward()
+        self.policyC_optimizer.step()
+        
         self._update_target_network()
 
         """
@@ -458,7 +441,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             ))
             self.eval_statistics.update(create_stats_ordered_dict(
                 'Intrinsic Reward',
-                ptu.get_numpy(int_reward),
+                ptu.get_numpy(int_rewards),
             ))
             self.eval_statistics.update(create_stats_ordered_dict(
                 'Q1 Predictions',
@@ -693,9 +676,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.policy.set_num_steps_total(self._n_env_steps_total)
         
         if self.newmethod:
-            action, agent_info = self.policy2.get_action(
+            action, agent_info = self.policyB.get_action(
                 observation,
-                0,#self.current_behavior_policy,
+                1,
             )
         else:
             action, agent_info = self.policy.get_action(
@@ -782,34 +765,35 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         nets = [
             self.qf1,
             self.qf2,
-            self.qf3,
+            self.qfB,
             self.target_qf1,
             self.target_qf2,
-            self.target_qf3,
-            self.eqf,
-            self.target_eqf,
+            self.target_qfB,
             self.pqf1,
             self.pqf2,
             self.policy,
-            self.policy2,
-            self.epolicy,
+            self.policyB,
+            self.policyC,
         ]
         return nets
 
     def _update_target_network(self):
         ptu.soft_update_from_to(self.qf1, self.target_qf1, self.soft_target_tau)
         ptu.soft_update_from_to(self.qf2, self.target_qf2, self.soft_target_tau)
-        ptu.soft_update_from_to(self.qf3, self.target_qf3, self.soft_target_tau)
-        ptu.soft_update_from_to(self.eqf, self.target_eqf, self.soft_target_tau)
+        ptu.soft_update_from_to(self.qfB, self.target_qfB, self.soft_target_tau)
 
     def get_epoch_snapshot(self, epoch):
         snapshot = super().get_epoch_snapshot(epoch)
         snapshot.update(
             qf1=self.qf1,
             qf2=self.qf2,
+            qfB=self.qfB,
             policy=self.policy,
+            policyB=self.policyB,
+            policyC=self.policyC,
             target_qf1=self.target_qf1,
             target_qf2=self.target_qf2,
+            target_qfB=self.target_qfB,
             pqf1=self.pqf1,
             pqf2=self.pqf2,
         )

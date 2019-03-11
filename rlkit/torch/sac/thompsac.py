@@ -23,7 +23,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             env,
             policy,
             policyB,
-            policyC,
             qf1,
             qf2,
             qfB,
@@ -40,7 +39,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             policy_pre_activation_weight=0.,
             optimizer_class=optim.Adam,
             alpha=1,
-            alphaC=1,
+            alphaB=1,
             int_w = 0.1,
             int_discount=0.99,
             int_direct=False,
@@ -60,9 +59,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
     ):
         if newmethod:
             if eval_deterministic:
-                eval_policy = MultiMakeDeterministic(policyC)
+                eval_policy = MultiMakeDeterministic(policyB)
             else:
-                eval_policy = policyC
+                eval_policy = policyB
         else:
             if eval_deterministic:
                 eval_policy = MultiMakeDeterministic(policy)
@@ -87,9 +86,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.current_behavior_policy = 0
         self.policy = policy
         self.policyB = policyB
-        self.policyC = policyC
         self.alpha = alpha
-        self.alphaC = alphaC
+        self.alphaB = alphaB
         self.int_w = int_w
         self.int_discount = int_discount
         self.int_direct = int_direct
@@ -124,9 +122,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             
         self.target_entropy = -np.prod(self.env.action_space.shape).item()  # heuristic value from Tuomas
             
-        self.log_alphaC = ptu.zeros(1, requires_grad=True)
-        self.alpha_optimizerC = optimizer_class(
-            [self.log_alphaC],
+        self.log_alphaB = ptu.zeros(1, requires_grad=True)
+        self.alpha_optimizerB = optimizer_class(
+            [self.log_alphaB],
             lr=policy_lr,
         )
             
@@ -141,10 +139,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         self.policyB_optimizer = optimizer_class(
             self.policyB.parameters(),
-            lr=policy_lr,
-        )
-        self.policyC_optimizer = optimizer_class(
-            self.policyC.parameters(),
             lr=policy_lr,
         )
         self.qf1_optimizer = optimizer_class(
@@ -302,11 +296,11 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         new_actionsB, policy_meanB, policy_log_stdB, log_piB = policy_outputsB[:4]
         
-        alpha_lossC = -(self.log_alphaC * (log_piB + self.target_entropy).detach()).mean()
-        self.alpha_optimizerC.zero_grad()
-        alpha_lossC.backward()
-        self.alpha_optimizerC.step()
-        alphaB = self.log_alphaC.exp()
+        alpha_lossB = -(self.log_alphaB * (log_piB + self.target_entropy).detach()).mean()
+        self.alpha_optimizerB.zero_grad()
+        alpha_lossB.backward()
+        self.alpha_optimizerB.step()
+        alphaB = self.log_alphaB.exp()
         
         """
         Update Q B
@@ -777,7 +771,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self.pqf2,
             self.policy,
             self.policyB,
-            self.policyC,
         ]
         return nets
 
@@ -794,7 +787,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             qfB=self.qfB,
             policy=self.policy,
             policyB=self.policyB,
-            policyC=self.policyC,
             target_qf1=self.target_qf1,
             target_qf2=self.target_qf2,
             target_qfB=self.target_qfB,

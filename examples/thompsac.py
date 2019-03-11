@@ -185,13 +185,6 @@ def experiment(variant):
             heads=2,
             hidden_activation=hidden_act,
         )
-        policyC = MultiTanhGaussianPolicy(
-            hidden_sizes=[net_size, net_size],
-            obs_dim=obs_dim + skill_dim,
-            action_dim=action_dim,
-            heads=1,
-            hidden_activation=hidden_act,
-        )
         
     if args.load_policy:
         print("loading policy")
@@ -208,7 +201,6 @@ def experiment(variant):
         env=env,
         policy=policy,
         policyB=policyB,
-        policyC=policyC,
         qf1=qf1,
         qf2=qf2,
         qfB=qfB,

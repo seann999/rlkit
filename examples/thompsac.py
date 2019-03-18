@@ -56,6 +56,9 @@ parser.add_argument('--autotune', action='store_true')
 parser.add_argument('--new', action='store_true')
 parser.add_argument('--rnd', action='store_true')
 
+parser.add_argument('--norm-obs', action='store_true')
+parser.add_argument('--norm-int-r', action='store_true')
+
 parser.add_argument('--load-prior', type=str, default=None)
 parser.add_argument('--load-policy', action='store_true')
 parser.add_argument('--lr', type=float, default=3e-4)
@@ -246,6 +249,8 @@ if __name__ == "__main__":
             reward_scale=args.reward_scale,
             alpha=args.alpha,
             rnd=args.rnd,
+            norm_int_r=args.norm_int_r,
+            norm_obs=args.norm_obs,
             use_automatic_entropy_tuning = args.autotune,
             train_policy_with_reparameterization=True,
             min_num_steps_before_training=1000,

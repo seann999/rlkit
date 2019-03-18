@@ -45,6 +45,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             int_direct=False,
             rnd=False,
             newmethod=False,
+            norm_int_r=False,
+            norm_obs=False,
 
             train_policy_with_reparameterization=True,
             soft_target_tau=1e-2,
@@ -93,6 +95,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.int_direct = int_direct
         self.rnd = rnd
         self.newmethod = newmethod
+        self.norm_int_r = norm_int_r
+        self.norm_obs = norm_obs
         self.qf1 = qf1
         self.qf2 = qf2
         self.pqf1 = pqf1
@@ -158,6 +162,10 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.targets = []
         self.targets2 = []
         
+        self.avg_int_r_std = None
+        self.avg_obs_mean = None
+        self.avg_obs_std = None
+        
     def get_q(self, obs, actions, qf1, qf2=None, pqf1=None, pqf2=None):
         # actions: N x K x A
         
@@ -213,8 +221,17 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         actions = batch['actions']
         next_obs = batch['next_observations'][:, :-self.heads-1]
 
-        q1_pred = self.qf1(obs, actions) + self.prior_coef * self.pqf1(obs, actions)
-        q2_pred = self.qf2(obs, actions) + self.prior_coef * self.pqf2(obs, actions)
+        q_obs = obs
+        q_next_obs = next_obs
+        
+        if self.norm_obs:
+            q_obs = (obs - self.avg_obs_mean) / self.avg_obs_std
+            q_next_obs = (next_obs - self.avg_obs_mean) / self.avg_obs_std
+            q_obs = torch.clamp(q_obs, -5, 5)
+            q_next_obs = torch.clamp(q_next_obs, -5, 5)
+        
+        q1_pred = self.qf1(q_obs, actions) + self.prior_coef * self.pqf1(q_obs, actions)
+        q2_pred = self.qf2(q_obs, actions) + self.prior_coef * self.pqf2(q_obs, actions)
         
         qf1_loss, qf2_loss = 0, 0
 
@@ -252,7 +269,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         next_new_actions, _, _, next_log_pi = next_policy_outputs[:4]
         
         # N x K
-        next_q_new_actions = self.get_q(next_obs, next_new_actions, self.target_qf1, self.target_qf2, self.pqf1, self.pqf2)
+        next_q_new_actions = self.get_q(q_next_obs, next_new_actions, self.target_qf1, self.target_qf2, self.pqf1, self.pqf2)
         
         # N x K
         entropy_bonus = -alpha * next_log_pi[:, torch.arange(self.heads), 0]
@@ -271,7 +288,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         """
         Update ensemble maximizers
         """
-        q_new_actions = self.get_q(obs, new_actions, self.qf1, self.qf2, self.pqf1, self.pqf2)
+        q_new_actions = self.get_q(q_obs, new_actions, self.qf1, self.qf2, self.pqf1, self.pqf2)
         
         kl_loss = (alpha * log_pi[:, torch.arange(self.heads), 0] - q_new_actions).sum(1).mean()
 
@@ -331,7 +348,17 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         qB_target_E = rewards + (1. - terminals) * self.discount * (next_QE + entropy_bonusB)
         self.targets2.append(np.hstack([obs.detach().cpu().numpy(), qB_target_E.detach().cpu().numpy(), actions.detach().cpu().numpy()]))
         # extrinsic + intrinsic target value
-        qB_target_I = (rewards + self.int_w * int_rewards) + (1. - terminals) * self.int_discount * (next_QI + entropy_bonusB)
+        if self.avg_int_r_std is None:
+            self.avg_int_r_std = int_rewards.detach().cpu().numpy().std()
+        else:
+            new_avg = int_rewards.detach().cpu().numpy().std()
+            self.avg_int_r_std = 0.99 * self.avg_int_r_std + 0.01 * new_avg
+            
+        if self.norm_int_r:
+            qB_target_I = (rewards + self.int_w * int_rewards / self.avg_int_r_std) + (1. - terminals) * self.int_discount * (next_QI + entropy_bonusB)
+        else:
+            qB_target_I = (rewards + self.int_w * int_rewards) + (1. - terminals) * self.int_discount * (next_QI + entropy_bonusB)
+            
         qB_target = torch.cat([qB_target_E, qB_target_I], 1)
         
         qB_pred = self.qfB(obs, actions)
@@ -442,6 +469,10 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 ptu.get_numpy(int_rewards),
             ))
             self.eval_statistics.update(create_stats_ordered_dict(
+                'Normalized Intrinsic Reward',
+                ptu.get_numpy(int_rewards / self.avg_int_r_std),
+            ))
+            self.eval_statistics.update(create_stats_ordered_dict(
                 'Q1 Predictions',
                 ptu.get_numpy(q1_pred),
             ))
@@ -480,13 +511,27 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self.targets2 = []
             self._start_epoch(epoch)
             set_to_train_mode(self.training_env)
+            
+            obs_batch = []
             for step in range(self.num_env_steps_per_epoch):
                 observation = self._take_step_in_env(observation)
+                obs_batch.append(observation)
+            
                 gt.stamp('sample')
 
-                self._try_to_train()
+                if self.avg_obs_mean is not None:
+                    self._try_to_train()
+                    
                 gt.stamp('train')
 
+            obs_batch = torch.FloatTensor(np.array(obs_batch))
+            if self.avg_obs_mean is None:
+                self.avg_obs_mean = obs_batch.mean(0)
+                self.avg_obs_std = obs_batch.std(0)  
+            else:
+                self.avg_obs_mean = 0.01 * obs_batch.mean(0) + 0.99 * self.avg_obs_mean
+                self.avg_obs_std = 0.01 * obs_batch.std(0) + 0.99 * self.avg_obs_std
+                    
             self.current_behavior_policy = np.random.randint(self.heads)
             set_to_eval_mode(self.env)
             self._try_to_eval(epoch)

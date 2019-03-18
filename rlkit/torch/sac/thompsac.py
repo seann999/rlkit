@@ -220,6 +220,13 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         pol = batch['observations'][:, -1]
         actions = batch['actions']
         next_obs = batch['next_observations'][:, :-self.heads-1]
+        
+        if self.avg_obs_mean is None:
+            self.avg_obs_mean = obs.mean(0)
+            self.avg_obs_std = obs.std(0)     
+        else:
+            self.avg_obs_mean = 0.001 * obs.mean(0) + 0.999 * self.avg_obs_mean
+            self.avg_obs_std = 0.001 * obs.std(0) + 0.999 * self.avg_obs_std
 
         q_obs = obs
         q_next_obs = next_obs
@@ -519,18 +526,13 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             
                 gt.stamp('sample')
 
-                if self.avg_obs_mean is not None:
-                    self._try_to_train()
-                    
+                self._try_to_train()
                 gt.stamp('train')
 
-            obs_batch = torch.FloatTensor(np.array(obs_batch)).cuda()
             if self.avg_obs_mean is None:
                 self.avg_obs_mean = obs_batch.mean(0)
                 self.avg_obs_std = obs_batch.std(0)  
-            else:
-                self.avg_obs_mean = 0.01 * obs_batch.mean(0) + 0.99 * self.avg_obs_mean
-                self.avg_obs_std = 0.01 * obs_batch.std(0) + 0.99 * self.avg_obs_std
+                exit()
                     
             self.current_behavior_policy = np.random.randint(self.heads)
             set_to_eval_mode(self.env)

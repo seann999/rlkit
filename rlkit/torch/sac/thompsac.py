@@ -524,7 +524,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                     
                 gt.stamp('train')
 
-            obs_batch = torch.FloatTensor(np.array(obs_batch))
+            obs_batch = torch.FloatTensor(np.array(obs_batch)).cuda()
             if self.avg_obs_mean is None:
                 self.avg_obs_mean = obs_batch.mean(0)
                 self.avg_obs_std = obs_batch.std(0)  

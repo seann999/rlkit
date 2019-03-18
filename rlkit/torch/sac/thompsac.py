@@ -374,9 +374,14 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         """
         Update policy B
         """
-        q_new_actionsB = self.get_q(obs, new_actionsB, self.qfB)
-        
-        kl_lossB = (alphaB * log_piB[:, torch.arange(2), 0] - q_new_actionsB).sum(1).mean()
+   
+        if self.int_direct:
+            q_preds = torch.min(q1_pred, q2_pred)
+            q_new_actionsB = (q_preds.mean(1) + self.int_w * q_preds.std(1)).unsqueeze(1)
+            kl_lossB = (alphaB * log_piB[:, torch.arange(2), 0] - q_new_actionsB).sum(1).mean()
+        else:
+            q_new_actionsB = self.get_q(obs, new_actionsB, self.qfB)
+            kl_lossB = (alphaB * log_piB[:, torch.arange(2), 0] - q_new_actionsB).sum(1).mean()
 
         mean_reg_lossB = self.policy_mean_reg_weight * (policy_meanB**2).sum(1).mean()
         std_reg_lossB = self.policy_std_reg_weight * (policy_log_stdB**2).sum(1).mean()
@@ -421,11 +426,11 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         Update networks
         """
         self.qf1_optimizer.zero_grad()
-        qf1_loss.mean().backward()
+        qf1_loss.mean().backward(retain_graph=self.int_direct)
         self.qf1_optimizer.step()
 
         self.qf2_optimizer.zero_grad()
-        qf2_loss.mean().backward()
+        qf2_loss.mean().backward(retain_graph=self.int_direct)
         self.qf2_optimizer.step()
         
         self.qfB_optimizer.zero_grad()

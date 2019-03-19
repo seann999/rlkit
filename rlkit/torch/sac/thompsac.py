@@ -383,7 +383,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             q_means = q_new_actionsB.mean(2)
             q_stds = q_new_actionsB.std(2)
             
-            q_new_actionsB = (q_means[:, 1] + self.int_w * q_means[:, 1] + q_means[:, 0]).unsqueeze(1)
+            q_new_actionsB = (q_means[:, 1] + self.int_w * q_stds[:, 1] + q_means[:, 0]).unsqueeze(1)
             kl_lossB = (alphaB * log_piB[:, torch.arange(2), 0] - q_new_actionsB).sum(1).mean()
         else:
             q_new_actionsB = self.get_q(obs, new_actionsB, self.qfB)

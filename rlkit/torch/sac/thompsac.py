@@ -166,7 +166,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.avg_obs_mean = None
         self.avg_obs_std = None
         
-    def get_q(self, obs, actions, qf1, qf2=None, pqf1=None, pqf2=None):
+    def get_q(self, obs, actions, qf1, qf2=None, pqf1=None, pqf2=None, return_raw=False):
         # actions: N x K x A
         
         K = actions.shape[1]
@@ -190,6 +190,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 q = qf1(expand_obs, flat_actions) + self.prior_coef * pqf1(expand_obs, flat_actions)
             else:
                 q = qf1(expand_obs, flat_actions)
+                
+            if return_raw:
+                return q.view(-1, K, q.shape[-1])
 
             # N x K x K
             q = q.view(-1, K, K)
@@ -376,8 +379,11 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         """
    
         if self.int_direct:
-            q_preds = torch.min(q1_pred, q2_pred)
-            q_new_actionsB = (q_preds.mean(1) + self.int_w * q_preds.std(1)).unsqueeze(1)
+            q_new_actionsB = self.get_q(obs, new_actionsB, self.qf1, self.qf2, self.pqf1, self.pqf2, return_raw=True)
+            q_means = q_new_actionsB.mean(2)
+            q_stds = q_new_actionsB.std(2)
+            
+            q_new_actionsB = (q_means[:, 1] + self.int_w * q_means[:, 1] + q_means[:, 0]).unsqueeze(1)
             kl_lossB = (alphaB * log_piB[:, torch.arange(2), 0] - q_new_actionsB).sum(1).mean()
         else:
             q_new_actionsB = self.get_q(obs, new_actionsB, self.qfB)

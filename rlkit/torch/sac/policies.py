@@ -136,7 +136,7 @@ class SplitMultiTanhGaussianPolicy(SplitMlp, ExplorationPolicy):
                 )
                 log_prob = log_prob.sum(dim=1, keepdim=True)
                 
-                log_probs = log_prob.view(-1, self.heads, self.action_dim)
+                log_probs = log_prob.view(-1, self.heads, 1)
             else:
                 if reparameterize is True:
                     action = tanh_normal.rsample()
@@ -266,7 +266,7 @@ class MultiTanhGaussianPolicy(Mlp, ExplorationPolicy):
                 )
                 log_prob = log_prob.sum(dim=1, keepdim=True)
                 
-                log_probs = log_prob.view(-1, self.heads, self.action_dim)
+                log_probs = log_prob.view(-1, self.heads, 1)
             else:
                 if reparameterize is True:
                     action = tanh_normal.rsample()

@@ -91,13 +91,15 @@ def experiment(variant):
         env = NormalizedBoxEnv(LineEnv())
     elif args.env == "swingup":
         env = NormalizedBoxEnv(create_swingup(args.force))
+    else:
+        import gym
+        env = NormalizedBoxEnv(gym.make(args.env))
 
     #env = NormalizedBoxEnv(HalfCheetahEnv())
     #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
     #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))
     # Or for a specific version:
-    # import gym
-    # env = NormalizedBoxEnv(gym.make('HalfCheetah-v1'))
+    
 
     skill_dim = 0#50
     obs_dim = int(np.prod(env.observation_space.shape))
@@ -232,6 +234,11 @@ if __name__ == "__main__":
         evalsteps = 1000
         epochsteps = 1000
         numepochs = 500
+    else:
+        maxpath = 1000
+        evalsteps = 1000
+        epochsteps = 1000
+        numepochs = 1000
         
     # noinspection PyTypeChecker
     variant = dict(

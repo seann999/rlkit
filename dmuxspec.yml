@@ -24,7 +24,7 @@ features:
 - pip:scipy==1.0.1
 - apt:patchelf
 - pip:cloudpickle==0.5.2
-- pip:gym==0.10.5
+- pip:gym[atari,mujoco]==0.10.5
 - pip:gitpython==2.1.7
 - pip:gtimer==1.0.0b5
 - pip:pygame==1.9.2
@@ -33,6 +33,7 @@ features:
 - pip:glfw==1.7.1
 - pip:jsonmerge==1.5.2
 - custom:pybox2d
+- custom:mujoco150
 custom_defs:
   pybox2d:
     commands: |
@@ -40,6 +41,33 @@ custom_defs:
       cd pybox2d
       python3 setup.py build
       python3 setup.py install
+  patchelf:
+    commands: |
+      # https://github.com/openai/mujoco-py/issues/147
+      add-apt-repository ppa:jamesh/snap-support
+      apt-get update
+      apt install patchelf
+    dependencies:
+    # software-properties-common is necessary for add-apt-repository
+    - apt:software-properties-common
+  mujoco150:
+    # Put mjkey.txt at /mjkey/mjkey.txt
+    commands: |
+      wget https://www.roboti.us/download/mjpro150_linux.zip
+      mkdir $HOME/.mujoco
+      chown -R user $HOME/.mujoco
+      unzip mjpro150_linux.zip -d $HOME/.mujoco
+      ln -s /mjkey/mjkey.txt $HOME/.mujoco/mjkey.txt
+      rm mjpro150_linux.zip
+      # Files are generated under mujoco_py/generated when imported.
+      # mujoco_py is installed by root while the user command is executed by
+      # user, so it will raise an permission error without chown here.
+      chown -R user /usr/local/lib/python3.5/dist-packages/mujoco_py/generated
+    dependencies:
+    - pip:mujoco_py==1.50.1.66
+    - apt:zip
+    - apt:unzip
+    - custom:patchelf
 hardware:
 - cpu==2
 - ram==4096

@@ -364,6 +364,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             new_avg = int_rewards.detach().cpu().numpy().std()
             self.avg_int_r_std = 0.99 * self.avg_int_r_std + 0.01 * new_avg
             
+        int_rewards = torch.clamp(int_rewards, 0, 10)
+        
         if self.norm_int_r:
             qB_target_I = (rewards + self.int_w * int_rewards / self.avg_int_r_std) + (1. - terminals) * self.int_discount * (next_QI + entropy_bonusB)
         else:
@@ -381,7 +383,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         if self.int_direct:
             q_new_actionsB = self.get_q(obs, new_actionsB, self.qf1, self.qf2, self.pqf1, self.pqf2, return_raw=True)
             q_means = q_new_actionsB.mean(2)
-            q_stds = q_new_actionsB.std(2)
+            q_stds = torch.clamp(q_new_actionsB.std(2), 0, q_means.max().detach())
             
             q_new_actionsB = (q_means[:, 1] + self.int_w * q_stds[:, 1] + q_means[:, 0]).unsqueeze(1)
             kl_lossB = (alphaB * log_piB[:, torch.arange(2), 0] - q_new_actionsB).sum(1).mean()

@@ -104,7 +104,7 @@ datasets:
 hardware:
 - cpu==1
 - gpu==1
-- ram==4096  # 4GB
-- disk==4096  # 4GB
+- ram==10000
+- disk==10000
 buildcmd:
   pwd && ls -al

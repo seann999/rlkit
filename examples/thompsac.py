@@ -151,7 +151,13 @@ def experiment(variant):
     qfB = FlattenMlp(
         hidden_sizes=[variant['net_size'], variant['net_size']],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=2,
+        output_size=1,
+        hidden_activation=hidden_act,
+    )
+    qfC = FlattenMlp(
+        hidden_sizes=[variant['net_size'], variant['net_size']],
+        input_size=obs_dim + skill_dim + action_dim,
+        output_size=1,
         hidden_activation=hidden_act,
     )
     pqf1 = create_net(args.prior_size)
@@ -187,7 +193,14 @@ def experiment(variant):
             hidden_sizes=[net_size, net_size],
             obs_dim=obs_dim + skill_dim,
             action_dim=action_dim,
-            heads=2,
+            heads=1,
+            hidden_activation=hidden_act,
+        )
+        policyC = MultiTanhGaussianPolicy(
+            hidden_sizes=[net_size, net_size],
+            obs_dim=obs_dim + skill_dim,
+            action_dim=action_dim,
+            heads=1,
             hidden_activation=hidden_act,
         )
         
@@ -206,9 +219,11 @@ def experiment(variant):
         env=env,
         policy=policy,
         policyB=policyB,
+        policyC=policyC,
         qf1=qf1,
         qf2=qf2,
         qfB=qfB,
+        qfC=qfC,
         pqf1=pqf1,
         pqf2=pqf2,
         prior_coef=prior,

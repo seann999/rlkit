@@ -312,6 +312,14 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         qf1_loss = (((q1_pred - q_target.detach())**2.0) * mask).sum(1)
         qf2_loss = (((q2_pred - q_target.detach())**2.0) * mask).sum(1)
         
+        self.qf1_optimizer.zero_grad()
+        qf1_loss.mean().backward()
+        self.qf1_optimizer.step()
+
+        self.qf2_optimizer.zero_grad()
+        qf2_loss.mean().backward()
+        self.qf2_optimizer.step()
+        
         self.targets.append(np.hstack([obs.detach().cpu().numpy(), q_target.detach().cpu().numpy(), mask.detach().cpu().numpy(), ((1. - terminals) * self.discount * entropy_bonus).detach().cpu().numpy(), pol.cpu().numpy()[:, None]]))
         
         """
@@ -464,13 +472,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         """
         Update networks
         """
-        self.qf1_optimizer.zero_grad()
-        qf1_loss.mean().backward(retain_graph=self.int_direct)
-        self.qf1_optimizer.step()
-
-        self.qf2_optimizer.zero_grad()
-        qf2_loss.mean().backward(retain_graph=self.int_direct)
-        self.qf2_optimizer.step()
         
         self.qfB_optimizer.zero_grad()
         qB_loss.mean().backward()

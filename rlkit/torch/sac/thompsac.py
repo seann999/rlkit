@@ -775,7 +775,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 0,
             )
         else:
-            action, agent_info = self.policy.get_action(
+            action, agent_info = self.policyC.get_action(
                 observation,
                 self.current_behavior_policy,
             )

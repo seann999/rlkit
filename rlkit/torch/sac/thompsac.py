@@ -68,9 +68,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 eval_policy = policyC
         else:
             if eval_deterministic:
-                eval_policy = MultiMakeDeterministic(policyC)
+                eval_policy = MultiMakeDeterministic(policy)
             else:
-                eval_policy = policyC
+                eval_policy = policy
             
         self.heads = heads
         self.prior_coef = prior_coef

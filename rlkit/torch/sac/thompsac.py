@@ -339,7 +339,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             int_rewards = (q1_pred.detach()**2.0).sum(1).unsqueeze(1)
         else:
             ps = torch.min(q1_pred.detach(), q2_pred.detach())
-            int_rewards = torch.abs(ps.median(1)[0].unsqueeze(1) - ps).median(1)[0].unsqueeze(1).detach()
+            int_rewards = ps.std(1).unsqueeze(1).detach()#torch.abs(ps.median(1)[0].unsqueeze(1) - ps).median(1)[0].unsqueeze(1).detach()
         
         # N x 2
         # calc maximum

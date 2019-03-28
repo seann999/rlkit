@@ -151,7 +151,7 @@ def experiment(variant):
     qfB = FlattenMlp(
         hidden_sizes=[variant['net_size'], variant['net_size']],
         input_size=obs_dim + skill_dim + action_dim,
-        output_size=1,
+        output_size=2,
         hidden_activation=hidden_act,
     )
     qfC = FlattenMlp(
@@ -193,14 +193,14 @@ def experiment(variant):
             hidden_sizes=[net_size, net_size],
             obs_dim=obs_dim + skill_dim,
             action_dim=action_dim,
-            heads=1,
+            heads=2,
             hidden_activation=hidden_act,
         )
         policyC = MultiTanhGaussianPolicy(
             hidden_sizes=[net_size, net_size],
             obs_dim=obs_dim + skill_dim,
             action_dim=action_dim,
-            heads=1,
+            heads=2,
             hidden_activation=hidden_act,
         )
         

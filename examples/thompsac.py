@@ -8,10 +8,6 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 
 import numpy as np
-#from gym.envs.mujoco import HalfCheetahEnv
-#from gym.envs.mujoco import HumanoidEnv, InvertedPendulumEnv, ReacherEnv, HumanoidStandupEnv
-#from gym.envs.mujoco import HopperEnv
-#from gym.envs.classic_control import Continuous_MountainCarEnv
 
 from torch.nn import functional as F
 import torch
@@ -25,8 +21,6 @@ from rlkit.torch.networks import FlattenMlp, SplitFlattenMlp, EnsembleFlattenMlp
 
 from custom_env import create_swingup
 import pickle
-#from garage.envs.mujoco.maze.ant_maze_env import AntMazeEnv
-#from box2d.cartpole_swingup_sparse_env import CartpoleSwingupSparseEnv
 
 from diayn import DIAYNWrappedEnv
 
@@ -40,20 +34,23 @@ parser.add_argument('--net-size', type=int, default=256)
 parser.add_argument('--prior-size', type=int, default=256)
 parser.add_argument('--drop', type=float, default=0.5)
 parser.add_argument('--prior', type=float, default=10)
-parser.add_argument('--force', type=float, default=1)
 parser.add_argument('--reward-scale', type=float, default=1)
-parser.add_argument('--alpha', type=float, default=1)
-parser.add_argument('--int-w', type=float, default=0.1)
-parser.add_argument('--int-discount', type=float, default=0.99)
-parser.add_argument('--int-direct', action='store_true')
 parser.add_argument('--dir', type=str, default="test")
+
 parser.add_argument('--env', type=str, default="line")
+parser.add_argument('--force', type=float, default=1)
+
 parser.add_argument('--ensemble', action='store_true')
 parser.add_argument('--split-actor', action='store_true')
 parser.add_argument('--split-critic', action='store_true')
-parser.add_argument('--range-prior', action='store_true')
+
 parser.add_argument('--autotune', action='store_true')
-parser.add_argument('--new', action='store_true')
+parser.add_argument('--alpha', type=float, default=1)
+
+parser.add_argument('--int-w', type=float, default=0.1)
+parser.add_argument('--int-discount', type=float, default=0.99)
+parser.add_argument('--int-direct', action='store_true')
+parser.add_argument('--int-policy', action='store_true')
 parser.add_argument('--rnd', action='store_true')
 
 parser.add_argument('--norm-obs', action='store_true')
@@ -76,15 +73,16 @@ from rlkit.torch.networks import FlattenMlp, Mlp
 from rlkit.torch.core import PyTorchModule
 
 class CombineMlp(PyTorchModule):
-    def __init__(self, mlp1, mlp2):
+    def __init__(self, mlp1, mlp2, beta=10):
         self.save_init_params(locals())
         super().__init__()
         
         self.mlp1 = mlp1
         self.mlp2 = mlp2
+        self.beta = beta
 
     def forward(self, *inputs, **kwargs):
-        return self.mlp1(*inputs) + 10 * self.mlp2(*inputs)
+        return self.mlp1(*inputs) + self.beta * self.mlp2(*inputs)
 
 def experiment(variant):
     if args.env == "line":
@@ -95,13 +93,6 @@ def experiment(variant):
         import gym
         env = NormalizedBoxEnv(gym.make(args.env))
 
-    #env = NormalizedBoxEnv(HalfCheetahEnv())
-    #env = NormalizedBoxEnv(Continuous_MountainCarEnv())
-    #env = DIAYNWrappedEnv(NormalizedBoxEnv(HumanoidEnv()))
-    # Or for a specific version:
-    
-
-    skill_dim = 0#50
     obs_dim = int(np.prod(env.observation_space.shape))
     action_dim = int(np.prod(env.action_space.shape))
     heads = args.heads
@@ -122,7 +113,7 @@ def experiment(variant):
             return EnsembleFlattenMlp(
                 heads,
                 hidden_sizes=[net_size, net_size],
-                input_size=obs_dim + skill_dim + action_dim,
+                input_size=obs_dim + action_dim,
                 output_size=1,
             )
     elif args.split_critic:
@@ -131,7 +122,7 @@ def experiment(variant):
         def create_net(net_size):
             return SplitFlattenMlp(
                 hidden_sizes=[net_size, net_size],
-                input_size=obs_dim + skill_dim + action_dim,
+                input_size=obs_dim + action_dim,
                 output_size=1,
                 heads=heads,
             )
@@ -141,7 +132,7 @@ def experiment(variant):
         def create_net(net_size):
             return FlattenMlp(
                 hidden_sizes=[net_size, net_size],
-                input_size=obs_dim + skill_dim + action_dim,
+                input_size=obs_dim + action_dim,
                 output_size=heads,
                 hidden_activation=hidden_act,
             )
@@ -150,13 +141,7 @@ def experiment(variant):
     qf2 = create_net(variant['net_size'])
     qfB = FlattenMlp(
         hidden_sizes=[variant['net_size'], variant['net_size']],
-        input_size=obs_dim + skill_dim + action_dim,
-        output_size=2,
-        hidden_activation=hidden_act,
-    )
-    qfC = FlattenMlp(
-        hidden_sizes=[variant['net_size'], variant['net_size']],
-        input_size=obs_dim + skill_dim + action_dim,
+        input_size=obs_dim + action_dim,
         output_size=1,
         hidden_activation=hidden_act,
     )
@@ -184,53 +169,37 @@ def experiment(variant):
         print("using multiheaded actor")
         policy = MultiTanhGaussianPolicy(
             hidden_sizes=[net_size, net_size],
-            obs_dim=obs_dim + skill_dim,
+            obs_dim=obs_dim,
             action_dim=action_dim,
             heads=heads,
             hidden_activation=hidden_act,
         )
         policyB = MultiTanhGaussianPolicy(
             hidden_sizes=[net_size, net_size],
-            obs_dim=obs_dim + skill_dim,
+            obs_dim=obs_dim,
             action_dim=action_dim,
-            heads=2,
-            hidden_activation=hidden_act,
-        )
-        policyC = MultiTanhGaussianPolicy(
-            hidden_sizes=[net_size, net_size],
-            obs_dim=obs_dim + skill_dim,
-            action_dim=action_dim,
-            heads=2,
+            heads=1,
             hidden_activation=hidden_act,
         )
         
     if args.load_policy:
         print("loading policy")
         policy = data['policy']
-    
-    if args.range_prior:
-        coefs = [0, 0.01, 0.03, 0.1, 0.3, 1, 2, 4, 8, 16, 32, 64]
-        prior = np.array(coefs[:heads], dtype=np.float32)
-        prior = torch.FloatTensor(prior).cuda()
-    else:
-        prior = args.prior
+
+    prior = args.prior
     
     algorithm = ThompsonSoftActorCritic(
         env=env,
         policy=policy,
         policyB=policyB,
-        policyC=policyC,
         qf1=qf1,
         qf2=qf2,
         qfB=qfB,
-        qfC=qfC,
         pqf1=pqf1,
         pqf2=pqf2,
         prior_coef=prior,
         droprate=args.drop,
         heads=heads,
-        #disc=disc,
-        #skill_dim=skill_dim,
         **variant['algo_params']
     )
     algorithm.to(ptu.device)
@@ -240,7 +209,7 @@ def experiment(variant):
 if __name__ == "__main__": 
     
     if args.env == "line":
-        maxpath = 110
+        maxpath = 200
         evalsteps = 1000
         epochsteps = 200
         numepochs = 500000
@@ -264,10 +233,10 @@ if __name__ == "__main__":
             batch_size=128,
             max_path_length=maxpath,
             discount=0.99,
+            int_policy=args.int_policy,
             int_w=args.int_w,
             int_discount=args.int_discount,
             int_direct=args.int_direct,
-            newmethod=args.new,
             reward_scale=args.reward_scale,
             alpha=args.alpha,
             rnd=args.rnd,

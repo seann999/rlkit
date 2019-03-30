@@ -23,11 +23,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             env,
             policy,
             policyB,
-            policyC,
             qf1,
             qf2,
             qfB,
-            qfC,
             pqf1,
             pqf2,
 
@@ -41,12 +39,11 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             policy_pre_activation_weight=0.,
             optimizer_class=optim.Adam,
             alpha=1,
-            alphaB=1,
+            int_policy=False,
             int_w = 0.1,
             int_discount=0.99,
             int_direct=False,
             rnd=False,
-            newmethod=False,
             norm_int_r=False,
             norm_obs=False,
 
@@ -61,7 +58,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             target_entropy=None,
             **kwargs
     ):
-        if newmethod:
+        if int_policy:
             if eval_deterministic:
                 eval_policy = MultiMakeDeterministic(policyB)
             else:
@@ -91,12 +88,11 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         self.policy = policy
         self.policyB = policyB
         self.alpha = alpha
-        self.alphaB = alphaB
+        self.int_policy = int_policy
         self.int_w = int_w
         self.int_discount = int_discount
         self.int_direct = int_direct
         self.rnd = rnd
-        self.newmethod = newmethod
         self.norm_int_r = norm_int_r
         self.norm_obs = norm_obs
         self.qf1 = qf1
@@ -226,6 +222,9 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         actions = batch['actions']
         next_obs = batch['next_observations'][:, :-self.heads-1]
         
+        """
+        Update Q Ensemble
+        """
         if self.avg_obs_mean is None:
             self.avg_obs_mean = obs.mean(0)
             self.avg_obs_std = obs.std(0)     
@@ -247,9 +246,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         
         qf1_loss, qf2_loss = 0, 0
 
-        """
-        Calculate log pi & other policy vars
-        """
         policy_outputs = self.policy(
             obs,
             reparameterize=self.train_policy_with_reparameterization,
@@ -257,9 +253,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         new_actions, policy_mean, policy_log_std, log_pi = policy_outputs[:4]
 
-        """
-        Update alpha
-        """
         if self.use_automatic_entropy_tuning:
             alpha_loss = -(self.log_alpha * (log_pi + self.target_entropy).detach()).mean()
             self.alpha_optimizer.zero_grad()
@@ -270,9 +263,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             alpha = self.alpha
             alpha_loss = 0
 
-        """
-        Update Q Ensemble
-        """
         next_policy_outputs = self.policy(
             next_obs,
             reparameterize=self.train_policy_with_reparameterization,
@@ -314,10 +304,8 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         policy_loss = kl_loss + policy_reg_loss
         
         """
-        Calculate log pi & other policy vars (2)
+        Update +intrisic networks
         """
-        # N x 2
-        # one head for greedy, other for curious
         policy_outputsB = self.policyB(
             obs,
             reparameterize=self.train_policy_with_reparameterization,
@@ -330,19 +318,14 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         alpha_lossB.backward()
         self.alpha_optimizerB.step()
         alphaB = self.log_alphaB.exp()
-        
-        """
-        Update Q B
-        """
-        # calculate intrinsic rewards (Nx1)
+
         if self.rnd:
             int_rewards = (q1_pred.detach()**2.0).sum(1).unsqueeze(1)
         else:
             ps = torch.min(q1_pred.detach(), q2_pred.detach())
-            int_rewards = ps.std(1).unsqueeze(1).detach()#torch.abs(ps.median(1)[0].unsqueeze(1) - ps).median(1)[0].unsqueeze(1).detach()
+            int_rewards = ps.std(1).unsqueeze(1)
+            #torch.abs(ps.median(1)[0].unsqueeze(1) - ps).median(1)[0].unsqueeze(1).detach()
         
-        # N x 2
-        # calc maximum
         next_policy_outputsB = self.policyB(
             next_obs,
             reparameterize=self.train_policy_with_reparameterization,
@@ -350,49 +333,37 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         next_new_actionsB, _, _, next_log_piB = next_policy_outputsB[:4]
         
-        # N x 2
         next_q_new_actionsB = self.get_q(next_obs, next_new_actionsB, self.target_qfB)
-        next_QE = next_q_new_actionsB[:, [0]]
-        next_QI = next_q_new_actionsB[:, [1]]
         
         alphaB = 0
-        entropy_bonusB = -alphaB * next_log_piB[:, [1], 0]
-        # extrinsic target value
-        qB_target_E = rewards + (1. - terminals) * self.discount * (next_QE + entropy_bonusB)
-        self.targets2.append(np.hstack([obs.detach().cpu().numpy(), qB_target_E.detach().cpu().numpy(), actions.detach().cpu().numpy()]))
-        # extrinsic + intrinsic target value
+        entropy_bonusB = -alphaB * next_log_piB[:, [0], 0]
+
         if self.avg_int_r_std is None:
             self.avg_int_r_std = int_rewards.detach().cpu().numpy().std()
         else:
             new_avg = int_rewards.detach().cpu().numpy().std()
-            self.avg_int_r_std = 0.99 * self.avg_int_r_std + 0.01 * new_avg
+            self.avg_int_r_std = 0.999 * self.avg_int_r_std + 0.001 * new_avg
             
         int_rewards = torch.clamp(int_rewards, 0, 10)
         
         if self.norm_int_r:
-            qB_target_I = (rewards + self.int_w * int_rewards / self.avg_int_r_std) + (1. - terminals) * self.int_discount * (next_QI + entropy_bonusB)
+            qB_target = (rewards + self.int_w * int_rewards / self.avg_int_r_std) + (1. - terminals) * self.int_discount * (next_q_new_actionsB[:, [0]] + entropy_bonusB)
         else:
-            qB_target_I = (rewards + self.int_w * int_rewards) + (1. - terminals) * self.int_discount * (next_QI + entropy_bonusB)
-            
-        qB_target = torch.cat([qB_target_E, qB_target_I], 1)
+            qB_target = (rewards + self.int_w * int_rewards) + (1. - terminals) * self.int_discount * (next_q_new_actionsB[:, [0]] + entropy_bonusB)
         
         qB_pred = self.qfB(obs, actions)
         qB_loss = ((qB_pred - qB_target.detach())**2.0).sum(1)
         
-        """
-        Update policy B
-        """
-   
         if self.int_direct:
             q_new_actionsB = self.get_q(obs, new_actionsB, self.qf1, self.qf2, self.pqf1, self.pqf2, return_raw=True)
             q_means = q_new_actionsB.mean(2)
             q_stds = torch.clamp(q_new_actionsB.std(2), 0, q_means.max().detach())
             
-            q_new_actionsB = (q_means[:, 1] + self.int_w * q_stds[:, 1] + q_means[:, 0]).unsqueeze(1)
-            kl_lossB = (alphaB * log_piB[:, torch.arange(2), 0] - q_new_actionsB).sum(1).mean()
+            q_new_actionsB = (q_means[:, 0] + self.int_w * q_stds[:, 0]).unsqueeze(1)
+            kl_lossB = (alphaB * log_piB[:, [0], 0] - q_new_actionsB).sum(1).mean()
         else:
             q_new_actionsB = self.get_q(obs, new_actionsB, self.qfB)
-            kl_lossB = (alphaB * log_piB[:, torch.arange(2), 0] - q_new_actionsB).sum(1).mean()
+            kl_lossB = (alphaB * log_piB[:, [0], 0] - q_new_actionsB).sum(1).mean()
 
         mean_reg_lossB = self.policy_mean_reg_weight * (policy_meanB**2).sum(1).mean()
         std_reg_lossB = self.policy_std_reg_weight * (policy_log_stdB**2).sum(1).mean()
@@ -402,46 +373,16 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         )
         policy_reg_lossB = mean_reg_lossB + std_reg_lossB + pre_activation_reg_lossB
         policy_lossB = kl_lossB + policy_reg_lossB
-        
-        """
-        Update policy C
-        """
-#         policy_outputsC = self.policyC(
-#             obs,
-#             reparameterize=self.train_policy_with_reparameterization,
-#             return_log_prob=True,
-#         )
-#         new_actionsC, policy_meanC, policy_log_stdC, log_piC = policy_outputsC[:4]
-        
-#         alpha_lossC = -(self.log_alphaC * (log_piC + self.target_entropy).detach()).mean()
-#         self.alpha_optimizerC.zero_grad()
-#         alpha_lossC.backward()
-#         self.alpha_optimizerC.step()
-#         alphaC = self.log_alphaC.exp()
-        
-#         q_new_actionsC = self.qfB(obs, new_actionsC[:, 0, :])
-#         q_new_actionsC = q_new_actionsC[:, 0] + self.int_w * q_new_actionsC[:, 1]
-        
-#         kl_lossC = (alphaC * log_piC[:, 0, 0] - q_new_actionsC).mean()
-
-#         mean_reg_lossC = self.policy_mean_reg_weight * (policy_meanC**2).sum(1).mean()
-#         std_reg_lossC = self.policy_std_reg_weight * (policy_log_stdC**2).sum(1).mean()
-#         pre_tanh_valueC = policy_outputsC[-1]
-#         pre_activation_reg_lossC = self.policy_pre_activation_weight * (
-#             (pre_tanh_valueC**2).sum(dim=1).mean()
-#         )
-#         policy_reg_lossC = mean_reg_lossC + std_reg_lossC + pre_activation_reg_lossC
-#         policy_lossC = kl_lossC + policy_reg_lossC
 
         """
         Update networks
         """
         self.qf1_optimizer.zero_grad()
-        qf1_loss.mean().backward(retain_graph=self.int_direct)
+        qf1_loss.mean().backward()
         self.qf1_optimizer.step()
 
         self.qf2_optimizer.zero_grad()
-        qf2_loss.mean().backward(retain_graph=self.int_direct)
+        qf2_loss.mean().backward()
         self.qf2_optimizer.step()
         
         self.qfB_optimizer.zero_grad()
@@ -456,10 +397,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
         policy_lossB.backward()
         self.policyB_optimizer.step()
         
-        # self.policyC_optimizer.zero_grad()
-        # policy_lossC.backward()
-        # self.policyC_optimizer.step()
-        
         self._update_target_network()
 
         """
@@ -469,7 +406,7 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self.need_to_update_eval_statistics = False
             self.eval_statistics['QF1 Loss'] = np.mean(ptu.get_numpy(qf1_loss))
             self.eval_statistics['QF2 Loss'] = np.mean(ptu.get_numpy(qf2_loss))
-            #self.eval_statistics['VF Loss'] = np.mean(ptu.get_numpy(vf_loss))
+
             self.eval_statistics['Policy Loss'] = np.mean(ptu.get_numpy(
                 policy_loss
             ))
@@ -503,10 +440,6 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
                 'Q2 Predictions',
                 ptu.get_numpy(q2_pred),
             ))
-            #self.eval_statistics.update(create_stats_ordered_dict(
-            #    'V Predictions',
-            #    ptu.get_numpy(v_pred),
-            #))
             self.eval_statistics.update(create_stats_ordered_dict(
                 'Log Pis',
                 ptu.get_numpy(log_pi),
@@ -731,15 +664,12 @@ class ThompsonSoftActorCritic(TorchRLAlgorithm):
             self._end_epoch(epoch)
                 
     def _take_step_in_env(self, observation):
-        #action, agent_info = self._get_action_and_info(
-        #    observation,
-        #)
         self.policy.set_num_steps_total(self._n_env_steps_total)
         
-        if self.newmethod:
+        if self.int_policy:
             action, agent_info = self.policyB.get_action(
                 observation,
-                1,
+                0,
             )
         else:
             action, agent_info = self.policy.get_action(
